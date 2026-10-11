@@ -47,7 +47,7 @@ pub const FRAME_IFRAME: u16 = 3;
 pub const FRAME_MORE_FRAGMENTS: u16 = 0x100;
 
 /// Only the first this-many bytes of each keyframe fragment are AES encrypted;
-/// the remainder of the fragment is plaintext H.264.
+/// the remainder of the fragment is plaintext video.
 pub const KF_ENC_PREFIX: usize = 128;
 
 /// AES-128 block size and key size in bytes.
@@ -57,5 +57,5 @@ pub const AES_KEY_LEN: usize = 16;
 /// Default video frame rate used when remuxing (the T8400 records 15 fps).
 pub const DEFAULT_FPS: u32 = 15;
 
-/// H.264 Annex-B 4-byte start code.
-pub const H264_START: &[u8; 4] = b"\x00\x00\x00\x01";
+/// Annex-B 4-byte start code (H.264 and HEVC).
+pub const ANNEXB_START: &[u8; 4] = b"\x00\x00\x00\x01";

@@ -1,7 +1,7 @@
 //! Single-file and batch conversion orchestration.
 
 use crate::container::split;
-use crate::crypto::{Key, build_h264};
+use crate::crypto::{Key, build_video_stream};
 use crate::keyderive::{self, Params};
 use crate::keys::{self, select_key};
 use crate::remux;
@@ -47,7 +47,7 @@ pub fn convert_file(
 ) -> Result<()> {
     let data = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let (video, audio) = split(&data);
-    let es = build_h264(&video, key);
+    let es = build_video_stream(&video, key);
     let codec = crate::crypto::detect_codec(&es).unwrap_or("h264");
     if raw {
         remux::write_raw(&es, &audio, &out.with_extension(""), codec)?;
@@ -106,7 +106,7 @@ fn convert_one(
     let key = keysrc.key_for(path, &data);
     match key {
         Some(k) => {
-            let es = build_h264(&video, Some(&k));
+            let es = build_video_stream(&video, Some(&k));
             let codec = crate::crypto::detect_codec(&es).unwrap_or("h264");
             let frames = crate::crypto::build_frames(&video, Some(&k));
             match remux::mux_mp4(&frames, &audio, out, fps, codec) {

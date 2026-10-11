@@ -1,9 +1,9 @@
 //! Format study: describe a `.dat`/`.zxvideo` file's record chain and test which regions
-//! look like plaintext H.264 vs ciphertext.
+//! look like plaintext video vs ciphertext.
 //!
 //! This is the first command to run on an unfamiliar camera. The reliable
 //! encrypted-vs-plaintext test (per the reference post) is the count of
-//! `00 00 00/01/02` escape sequences: plaintext H.264 slice data is full of
+//! `00 00 00/01/02` escape sequences: plaintext video slice data is full of
 //! them, AES ciphertext has them only at random. Entropy is NOT used because a
 //! dense CABAC keyframe is also near-8-bit entropy.
 
@@ -50,7 +50,7 @@ pub fn adts_info(audio: &[u8]) -> Option<(&'static str, u32, u8)> {
     Some((codec, rate, channels))
 }
 
-/// Count `00 00 00`, `00 00 01`, `00 00 02` occurrences (the H.264 escape /
+/// Count `00 00 00`, `00 00 01`, `00 00 02` occurrences (the Annex-B escape /
 /// start-code prefixes that cannot appear inside encrypted data).
 pub fn escape_count(data: &[u8]) -> usize {
     data.windows(3)

@@ -191,7 +191,7 @@ fn cmd_inspect(file: &std::path::Path) -> Result<()> {
         println!("sibling snapshot header: serial {serial}, rand {rand}");
     }
     println!("\nfirst records:\n{}", r.first_record_dump);
-    println!("region escape-sequence test (plaintext H.264 has many; ciphertext ~none):");
+    println!("region escape-sequence test (plaintext video has many; ciphertext ~none):");
     println!("  {:<28} {:>10} {:>10} {:>8}", "region", "bytes", "escapes", "zero%");
     for (name, len, esc, zp) in &r.regions {
         println!("  {name:<28} {len:>10} {esc:>10} {zp:>7.2}%");
@@ -307,7 +307,11 @@ fn cmd_convert(
         }
     };
     convert::convert_file(file, out, selected.as_ref(), fps, raw)?;
-    println!("wrote {}", if raw { out.with_extension("h264").display().to_string() } else { out.display().to_string() });
+    if raw {
+        println!("wrote raw elementary streams next to {}", out.with_extension("").display());
+    } else {
+        println!("wrote {}", out.display());
+    }
     Ok(())
 }
 

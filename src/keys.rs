@@ -1,7 +1,7 @@
 //! Key management: `keys.json`, `continuefilelink.dat`, and per-file selection.
 
 use crate::container::split;
-use crate::crypto::{Key, decrypt_iframe, looks_like_h264};
+use crate::crypto::{Key, decrypt_iframe, looks_like_keyframe};
 use crate::format::KF_ENC_PREFIX;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -57,7 +57,7 @@ pub fn select_key<'a>(keys: &'a [(Key, Option<String>)], dat: &[u8]) -> Option<&
     let probe = &frag0[..n];
     for (key, _) in keys {
         let pt = decrypt_iframe(key, &[probe.to_vec()]);
-        if looks_like_h264(&pt) {
+        if looks_like_keyframe(&pt) {
             return Some(key);
         }
     }

@@ -1,7 +1,7 @@
 //! AES-128-ECB decryption of eufy keyframe fragments.
 //!
 //! Only the first `KF_ENC_PREFIX` bytes of each keyframe fragment are
-//! encrypted; the rest is plaintext H.264. ECB has no IV and we never pad, so
+//! encrypted; the rest is plaintext video. ECB has no IV and we never pad, so
 //! only whole 16-byte blocks within the prefix are decrypted and any trailing
 //! bytes pass through untouched (matching the author's reference script).
 
@@ -59,14 +59,14 @@ pub fn aes_ecb_decrypt(key: &Key, blob: &[u8]) -> Vec<u8> {
 }
 
 /// A fragment is encrypted iff it does NOT already begin with an Annex-B start
-/// code. This is the model-agnostic test: plaintext H.264 fragments (P-frames,
+/// code. This is the model-agnostic test: plaintext video fragments (P-frames,
 /// and on some models whole frames tagged as keyframes) begin with
 /// `00 00 00 01`, while an AES-encrypted keyframe prefix is ciphertext and does
 /// not. It is correct for both the T8400 (every keyframe fragment's prefix is
 /// encrypted) and the T8416 (only true keyframe records are encrypted, though
 /// all video records share one frame-type tag).
 pub fn fragment_is_encrypted(frag: &[u8]) -> bool {
-    frag.len() >= 4 && &frag[..4] != H264_START
+    frag.len() >= 4 && &frag[..4] != ANNEXB_START
 }
 
 /// Decrypt a keyframe: for each fragment that is encrypted, decrypt its first
@@ -85,29 +85,30 @@ pub fn decrypt_iframe(key: &Key, fragments: &[Vec<u8>]) -> Vec<u8> {
     out
 }
 
-/// Reconstruct the full H.264 elementary stream for a parsed file. With a key,
-/// every encrypted fragment is decrypted; plaintext fragments pass through.
-pub fn build_h264(video: &[VideoFrame], key: Option<&Key>) -> Vec<u8> {
-    let mut h264 = Vec::new();
+/// Reconstruct the full video elementary stream (H.264 or HEVC) for a parsed
+/// file. With a key, every encrypted fragment is decrypted; plaintext fragments
+/// pass through.
+pub fn build_video_stream(video: &[VideoFrame], key: Option<&Key>) -> Vec<u8> {
+    let mut es = Vec::new();
     for frame in video {
         for f in &frame.fragments {
             match key {
                 Some(k) if fragment_is_encrypted(f) => {
                     let n = f.len().min(KF_ENC_PREFIX);
-                    h264.extend_from_slice(&aes_ecb_decrypt(k, &f[..n]));
-                    h264.extend_from_slice(&f[n..]);
+                    es.extend_from_slice(&aes_ecb_decrypt(k, &f[..n]));
+                    es.extend_from_slice(&f[n..]);
                 }
-                _ => h264.extend_from_slice(f),
+                _ => es.extend_from_slice(f),
             }
         }
     }
     // A file can begin mid-keyframe; drop anything before the first NAL start.
-    if let Some(s) = find_start_code(&h264)
+    if let Some(s) = find_start_code(&es)
         && s > 0
     {
-        h264.drain(..s);
+        es.drain(..s);
     }
-    h264
+    es
 }
 
 /// One decoded access unit for the muxer: Annex-B bytes plus a sync flag.
@@ -163,14 +164,14 @@ pub fn count_encrypted_fragments(video: &[VideoFrame]) -> usize {
 
 /// Find the first 4-byte Annex-B start code.
 pub fn find_start_code(data: &[u8]) -> Option<usize> {
-    data.windows(4).position(|w| w == H264_START)
+    data.windows(4).position(|w| w == ANNEXB_START)
 }
 
 /// Does this decrypted keyframe prefix look like a valid video start? It must
 /// open with an Annex-B start code whose following NAL is a parameter set or
 /// keyframe slice for H.264 or H.265/HEVC. eufy models use either codec.
-pub fn looks_like_h264(plaintext: &[u8]) -> bool {
-    if plaintext.len() < 6 || &plaintext[..4] != H264_START {
+pub fn looks_like_keyframe(plaintext: &[u8]) -> bool {
+    if plaintext.len() < 6 || &plaintext[..4] != ANNEXB_START {
         return false;
     }
     // H.264: nal_unit_type = byte4 & 0x1f; SPS=7, PPS=8, IDR=5, SEI=6, AUD=9.

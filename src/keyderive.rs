@@ -22,7 +22,7 @@
 //! encrypted keyframe, then every file's key follows from its own `rand`.
 
 use crate::container::split;
-use crate::crypto::{Key, decrypt_iframe, looks_like_h264};
+use crate::crypto::{Key, decrypt_iframe, looks_like_keyframe};
 use crate::format::KF_ENC_PREFIX;
 use md5::Md5;
 use sha2::{Digest, Sha256};
@@ -84,7 +84,7 @@ pub fn derive(serial: &str, rand: u64, p: Params) -> Key {
 }
 
 /// Verify a key by decrypting the first encrypted keyframe fragment in `dat`
-/// and checking it begins with a valid H.264 header.
+/// and checking it begins with a valid video (H.264/HEVC) keyframe header.
 pub fn verify_against_keyframe(key: &Key, dat: &[u8]) -> bool {
     let (video, _) = split(dat);
     for frame in video.iter().filter(|f| f.is_iframe) {
@@ -92,7 +92,7 @@ pub fn verify_against_keyframe(key: &Key, dat: &[u8]) -> bool {
         if crate::crypto::fragment_is_encrypted(frag0) {
             let n = frag0.len().min(KF_ENC_PREFIX);
             let pt = decrypt_iframe(key, &[frag0[..n].to_vec()]);
-            return looks_like_h264(&pt);
+            return looks_like_keyframe(&pt);
         }
     }
     false
