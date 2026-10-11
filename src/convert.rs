@@ -5,7 +5,7 @@ use crate::crypto::{Key, build_video_stream};
 use crate::keyderive::{self, Params};
 use crate::keys::{self, select_key};
 use crate::remux;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use serde::Serialize;
@@ -47,15 +47,47 @@ pub fn convert_file(
 ) -> Result<()> {
     let data = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let (video, audio) = split(&data);
-    let es = build_video_stream(&video, key);
-    let codec = crate::crypto::detect_codec(&es).unwrap_or("h264");
     if raw {
+        let es = build_video_stream(&video, key);
+        let codec = crate::crypto::detect_codec(&es).unwrap_or("h264");
         remux::write_raw(&es, &audio, &out.with_extension(""), codec)?;
-    } else {
-        let frames = crate::crypto::build_frames(&video, key);
-        remux::mux_mp4(&frames, &audio, out, fps, codec)?;
+        return Ok(());
     }
+    let frames = crate::crypto::build_frames(&video, key);
+    let codec = crate::crypto::frames_codec(&frames).ok_or_else(|| {
+        anyhow!(
+            "no decryptable keyframe in {} — the key is wrong or missing, so the video \
+             cannot be built. Audio can still be recovered with `extract-audio`.",
+            path.display()
+        )
+    })?;
+    remux::mux_mp4(&frames, &audio, out, fps, codec, recording_unix_time(path))?;
     Ok(())
+}
+
+/// Parse a recording's wall-clock time from its `YYYYMMDDHHMMSS` filename stem,
+/// as seconds since the Unix epoch. eufy filenames carry no zone, so the time is
+/// interpreted in the machine's local timezone (DST-aware, resolved per clip),
+/// matching the camera's own clock. It stamps the output's modification time and
+/// the MP4 creation time so recovered clips carry the time they were filmed
+/// rather than when they were converted. Returns None if the stem isn't a
+/// recognizable datetime (or falls in a DST spring-forward gap).
+pub fn recording_unix_time(path: &Path) -> Option<u64> {
+    use chrono::{LocalResult, NaiveDate, TimeZone};
+    let stem = path.file_stem()?.to_str()?;
+    let d = stem.get(..14)?;
+    if !d.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let naive = NaiveDate::from_ymd_opt(d[0..4].parse().ok()?, d[4..6].parse().ok()?, d[6..8].parse().ok()?)?
+        .and_hms_opt(d[8..10].parse().ok()?, d[10..12].parse().ok()?, d[12..14].parse().ok()?)?;
+    let ts = match chrono::Local.from_local_datetime(&naive) {
+        // Unambiguous, or a DST fall-back repeat (take the earlier instant).
+        LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => dt.timestamp(),
+        // Nonexistent local time (DST spring-forward gap): can't place it.
+        LocalResult::None => return None,
+    };
+    u64::try_from(ts).ok()
 }
 
 /// How batch obtains each file's key.
@@ -103,21 +135,22 @@ fn convert_one(
         Err(e) => return Outcome::ReadError(e.to_string()),
     };
     let (video, audio) = split(&data);
-    let key = keysrc.key_for(path, &data);
-    match key {
-        Some(k) => {
-            let es = build_video_stream(&video, Some(&k));
-            let codec = crate::crypto::detect_codec(&es).unwrap_or("h264");
-            let frames = crate::crypto::build_frames(&video, Some(&k));
-            match remux::mux_mp4(&frames, &audio, out, fps, codec) {
-                Ok(()) => Outcome::Ok,
-                Err(e) => Outcome::MuxError(e.to_string()),
-            }
-        }
+    let when = recording_unix_time(path);
+    // A key decrypts a usable keyframe iff `frames_codec` recognizes one; a
+    // wrong key leaves only garbage, which is handled exactly like no key.
+    let codec = keysrc.key_for(path, &data).and_then(|k| {
+        let frames = crate::crypto::build_frames(&video, Some(&k));
+        crate::crypto::frames_codec(&frames).map(|c| (frames, c))
+    });
+    match codec {
+        Some((frames, codec)) => match remux::mux_mp4(&frames, &audio, out, fps, codec, when) {
+            Ok(()) => Outcome::Ok,
+            Err(e) => Outcome::MuxError(e.to_string()),
+        },
         None => {
             if audio_only_fallback && !audio.is_empty() {
                 let m4a = out.with_extension("m4a");
-                match remux::mux_audio_only(&audio, &m4a) {
+                match remux::mux_audio_only(&audio, &m4a, when) {
                     Ok(()) => Outcome::AudioOnly,
                     Err(e) => Outcome::MuxError(e.to_string()),
                 }
@@ -224,4 +257,22 @@ pub fn batch(
     )
     .ok();
     Ok(summary)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recording_unix_time_parses_and_rejects() {
+        // A real clip name parses to some instant (exact value is TZ-dependent).
+        assert!(recording_unix_time(Path::new("/x/20260813101151.zxvideo")).is_some());
+        // Extra suffix after the 14 datetime digits is fine.
+        assert!(recording_unix_time(Path::new("/x/20260813101151_02.dat")).is_some());
+        // Too short, non-numeric, or out-of-range fields are rejected.
+        assert!(recording_unix_time(Path::new("/x/2026081310115.dat")).is_none());
+        assert!(recording_unix_time(Path::new("/x/snapshot.jpg")).is_none());
+        assert!(recording_unix_time(Path::new("/x/20261345101151.dat")).is_none()); // month 13
+        assert!(recording_unix_time(Path::new("/x/20260813256199.dat")).is_none()); // 25:61:99
+    }
 }

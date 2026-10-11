@@ -182,6 +182,16 @@ pub fn looks_like_keyframe(plaintext: &[u8]) -> bool {
     matches!(h264, 5 | 7 | 8) || matches!(hevc, 32 | 33 | 34 | 19 | 20 | 21)
 }
 
+/// Detect the codec from the first decrypted keyframe's parameter sets.
+/// Returns "hevc"/"h264", or None when no keyframe decrypted to a recognizable
+/// header (the usual signal that the key is wrong or missing). Inspecting the
+/// keyframe directly avoids rebuilding the whole elementary stream just to
+/// sniff the codec, and never falls back to a guessed codec.
+pub fn frames_codec(frames: &[Frame]) -> Option<&'static str> {
+    let kf = frames.iter().find(|f| f.is_keyframe)?;
+    detect_codec(&kf.annexb)
+}
+
 /// Detect the codec of a reconstructed Annex-B stream from its first NAL.
 /// Returns "hevc", "h264", or None if it can't tell.
 pub fn detect_codec(stream: &[u8]) -> Option<&'static str> {

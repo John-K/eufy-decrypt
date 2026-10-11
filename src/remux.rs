@@ -10,6 +10,7 @@ use std::fs::File;
 use std::io::{Seek, SeekFrom, Write};
 use std::num::NonZeroU32;
 use std::path::Path;
+use std::time::{Duration, UNIX_EPOCH};
 
 use shiguredo_mp4::TrackKind;
 use shiguredo_mp4::bitstream::aac::{
@@ -114,8 +115,25 @@ fn build_video(frames: &[Frame], codec: &str) -> Result<(SampleEntry, Vec<Vec<u8
     Ok((entry, samples))
 }
 
+/// Set a file's modification time to the clip's recording time, so recovered
+/// clips sort by when they were filmed. Best-effort: a failure here never fails
+/// the conversion.
+fn stamp_mtime(file: &File, creation_unix: Option<u64>) {
+    if let Some(secs) = creation_unix {
+        let _ = file.set_modified(UNIX_EPOCH + Duration::from_secs(secs));
+    }
+}
+
 /// Author `out` as an MP4 from decrypted video frames and ADTS audio.
-pub fn mux_mp4(frames: &[Frame], aac_bytes: &[u8], out: &Path, fps: u32, codec: &str) -> Result<()> {
+/// `creation_unix`, when set, stamps the MP4 creation time and the file mtime.
+pub fn mux_mp4(
+    frames: &[Frame],
+    aac_bytes: &[u8],
+    out: &Path,
+    fps: u32,
+    codec: &str,
+    creation_unix: Option<u64>,
+) -> Result<()> {
     if frames.is_empty() {
         bail!("no video frames to mux");
     }
@@ -129,7 +147,11 @@ pub fn mux_mp4(frames: &[Frame], aac_bytes: &[u8], out: &Path, fps: u32, codec: 
         counts.push(a.samples.len());
     }
     let reserved = estimate_maximum_moov_box_size(&counts);
-    let muxer_opts = Mp4FileMuxerOptions { reserved_moov_box_size: reserved, ..Default::default() };
+    let muxer_opts = Mp4FileMuxerOptions {
+        reserved_moov_box_size: reserved,
+        creation_timestamp: Duration::from_secs(creation_unix.unwrap_or(0)),
+        ..Default::default()
+    };
     let mut muxer = Mp4FileMuxer::with_options(muxer_opts).map_err(me("creating muxer"))?;
 
     if let Some(parent) = out.parent() {
@@ -201,15 +223,21 @@ pub fn mux_mp4(frames: &[Frame], aac_bytes: &[u8], out: &Path, fps: u32, codec: 
         file.write_all(bytes)?;
     }
     file.flush()?;
+    stamp_mtime(&file, creation_unix);
     Ok(())
 }
 
 /// Author an audio-only MP4 (`.m4a`) from ADTS audio; no key needed.
-pub fn mux_audio_only(aac_bytes: &[u8], out: &Path) -> Result<()> {
+/// `creation_unix`, when set, stamps the MP4 creation time and the file mtime.
+pub fn mux_audio_only(aac_bytes: &[u8], out: &Path, creation_unix: Option<u64>) -> Result<()> {
     let audio = parse_audio(aac_bytes)?.ok_or_else(|| anyhow!("no audio to mux"))?;
     let counts = [audio.samples.len()];
     let reserved = estimate_maximum_moov_box_size(&counts);
-    let muxer_opts = Mp4FileMuxerOptions { reserved_moov_box_size: reserved, ..Default::default() };
+    let muxer_opts = Mp4FileMuxerOptions {
+        reserved_moov_box_size: reserved,
+        creation_timestamp: Duration::from_secs(creation_unix.unwrap_or(0)),
+        ..Default::default()
+    };
     let mut muxer = Mp4FileMuxer::with_options(muxer_opts).map_err(me("creating muxer"))?;
 
     if let Some(parent) = out.parent() {
@@ -243,6 +271,7 @@ pub fn mux_audio_only(aac_bytes: &[u8], out: &Path) -> Result<()> {
         file.write_all(bytes)?;
     }
     file.flush()?;
+    stamp_mtime(&file, creation_unix);
     Ok(())
 }
 
@@ -289,7 +318,7 @@ mod tests {
         }
 
         let out = std::env::temp_dir().join(format!("eufy_test_{}.m4a", std::process::id()));
-        mux_audio_only(&adts, &out).unwrap();
+        mux_audio_only(&adts, &out, None).unwrap();
         let bytes = std::fs::read(&out).unwrap();
         std::fs::remove_file(&out).ok();
 

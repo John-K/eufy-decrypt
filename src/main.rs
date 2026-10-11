@@ -301,9 +301,15 @@ fn cmd_convert(
                 None
             })
         }
-        (None, None) => {
-            eprintln!("warning: no key given; keyframes will stay encrypted (audio + P-frames only)");
+        (None, None) if raw => {
+            eprintln!("warning: no key given; keyframes stay encrypted in the raw stream");
             None
+        }
+        (None, None) => {
+            bail!(
+                "no key given: keyframes stay encrypted, so a playable video cannot be built. \
+                 Pass --key/--keys, or use `extract-audio` to recover audio without a key."
+            );
         }
     };
     convert::convert_file(file, out, selected.as_ref(), fps, raw)?;
@@ -407,7 +413,7 @@ fn cmd_extract_audio(file: &std::path::Path, out: &std::path::Path) -> Result<()
     if audio.is_empty() {
         bail!("no audio records found in {}", file.display());
     }
-    remux::mux_audio_only(&audio, out)?;
+    remux::mux_audio_only(&audio, out, convert::recording_unix_time(file))?;
     println!("wrote {} ({} bytes of AAC)", out.display(), audio.len());
     Ok(())
 }
