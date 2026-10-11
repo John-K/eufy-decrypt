@@ -1,4 +1,4 @@
-//! Format study: describe a `.dat` file's record chain and test which regions
+//! Format study: describe a `.dat`/`.zxvideo` file's record chain and test which regions
 //! look like plaintext H.264 vs ciphertext.
 //!
 //! This is the first command to run on an unfamiliar camera. The reliable

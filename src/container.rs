@@ -1,4 +1,4 @@
-//! Parsing of the `XZYH` record chain inside a eufy `.dat` file.
+//! Parsing of the `XZYH` record chain inside a eufy `.dat`/`.zxvideo` file.
 
 use crate::format::*;
 

@@ -1,4 +1,4 @@
-//! On-disk format constants for eufy `.dat` continuous recordings.
+//! On-disk format constants for eufy `.dat`/`.zxvideo` recordings.
 //!
 //! These are known-good for the eufy Indoor Cam 2K (T8400) on firmware 2.2.0.0,
 //! as documented by Christian Guevara (thedveloper.com) and the USENIX WOOT'24

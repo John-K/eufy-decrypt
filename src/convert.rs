@@ -37,7 +37,7 @@ impl Outcome {
     }
 }
 
-/// Convert one `.dat` to MP4 with an explicit key (or raw streams / audio-only).
+/// Convert one `.dat`/`.zxvideo` to MP4 with an explicit key (or raw streams / audio-only).
 pub fn convert_file(
     path: &Path,
     out: &Path,
@@ -140,7 +140,7 @@ pub struct BatchOptions {
     pub limit: usize,
 }
 
-/// Convert every `.dat` under `source` into `dest`, laid out as
+/// Convert every `.dat`/`.zxvideo` under `source` into `dest`, laid out as
 /// `dest/<YYYYMMDD>/<YYYYMMDDHHMMSS>.mp4`. Resumable: existing outputs are
 /// skipped. Writes `convert_summary.json` into `dest`.
 pub fn batch(

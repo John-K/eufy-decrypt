@@ -1,4 +1,4 @@
-//! eufy-decrypt: decrypt eufy camera SD-card `.dat` recordings to MP4, offline.
+//! eufy-decrypt: decrypt eufy camera SD-card `.dat`/`.zxvideo` recordings to MP4, offline.
 //!
 //! See the README. Workflow: `inspect` a file to confirm the format, obtain the
 //! weekly AES keys (`derive`/`keys`, or paste from the reference angr script),
@@ -24,7 +24,7 @@ use std::path::PathBuf;
 #[command(
     name = "eufy-decrypt",
     about = "Decrypt eufy camera SD-card recordings to MP4 (offline).",
-    long_about = "Decrypt eufy camera SD-card .dat recordings to MP4, fully offline.\n\n\
+    long_about = "Decrypt eufy camera SD-card .dat/.zxvideo recordings to MP4, fully offline.\n\n\
                   SAFETY: the card is usually the only copy. Image it read-only and verify \
                   with sha256 BEFORE running anything. This tool only reads sources and only \
                   writes to the destinations you name.",
@@ -37,7 +37,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Describe a .dat file's record chain and test encrypted vs plaintext regions.
+    /// Describe a .dat/.zxvideo file's record chain and test encrypted vs plaintext regions.
     Inspect {
         file: PathBuf,
     },
@@ -71,7 +71,7 @@ enum Cmd {
         #[arg(long)]
         sfx: u32,
     },
-    /// Convert a single .dat to MP4.
+    /// Convert a single .dat/.zxvideo to MP4.
     Convert {
         file: PathBuf,
         #[arg(long)]
