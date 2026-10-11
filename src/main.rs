@@ -79,7 +79,7 @@ enum Cmd {
         /// keys.json to auto-select the right key for this file.
         #[arg(long)]
         keys: Option<PathBuf>,
-        /// Write raw .h264/.aac instead of invoking ffmpeg.
+        /// Write the raw elementary streams (.h264/.hevc + .aac) instead of an MP4.
         #[arg(long)]
         raw: bool,
         #[arg(long, default_value_t = format::DEFAULT_FPS)]
@@ -403,7 +403,7 @@ fn cmd_extract_audio(file: &std::path::Path, out: &std::path::Path) -> Result<()
     if audio.is_empty() {
         bail!("no audio records found in {}", file.display());
     }
-    remux::remux_audio_only(&audio, out)?;
+    remux::mux_audio_only(&audio, out)?;
     println!("wrote {} ({} bytes of AAC)", out.display(), audio.len());
     Ok(())
 }

@@ -6,7 +6,8 @@ the method documented by Christian Guevara
 ([thedveloper.com](https://thedveloper.com/blog/eufy-t8400-sdcard-decryption))
 and the USENIX WOOT'24 paper *"Reverse Engineering the Eufy Ecosystem"* (Goeman
 et al.). The key derivation was reverse-engineered from the app's native library
-and reimplemented in Rust, so no Python or angr runtime is needed.
+and reimplemented in Rust, and the MP4 is authored in-process, so no external
+tools are needed: no Python, no angr, no ffmpeg.
 
 ## Safety first
 
@@ -120,8 +121,9 @@ gitignored: the keys are specific to your camera.
 
 ## Requirements
 
-- Rust (edition 2024) and `ffmpeg` on `PATH` (used for the lossless remux only;
-  `--raw` skips it and writes the raw `.h264`/`.hevc` + `.aac`).
+- Rust (edition 2024) only. The MP4 is authored in-process (pure Rust, via the
+  `shiguredo_mp4` crate), so **ffmpeg is not required**. `--raw` skips the
+  container and writes the raw `.h264`/`.hevc` + `.aac` elementary streams.
 
 ## Credits
 

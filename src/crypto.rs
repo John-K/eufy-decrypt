@@ -110,6 +110,48 @@ pub fn build_h264(video: &[VideoFrame], key: Option<&Key>) -> Vec<u8> {
     h264
 }
 
+/// One decoded access unit for the muxer: Annex-B bytes plus a sync flag.
+pub struct Frame {
+    pub is_keyframe: bool,
+    pub annexb: Vec<u8>,
+}
+
+/// Reconstruct per-frame Annex-B access units (one `Frame` per video frame),
+/// decrypting encrypted keyframe fragments. A frame is a keyframe iff it had an
+/// encrypted fragment (eufy only encrypts true keyframes). Frames are trimmed to
+/// start at a NAL start code; any without one are dropped.
+pub fn build_frames(video: &[VideoFrame], key: Option<&Key>) -> Vec<Frame> {
+    let mut out = Vec::new();
+    for frame in video {
+        let mut annexb = Vec::new();
+        let mut is_keyframe = false;
+        for f in &frame.fragments {
+            if fragment_is_encrypted(f) {
+                is_keyframe = true;
+                match key {
+                    Some(k) => {
+                        let n = f.len().min(KF_ENC_PREFIX);
+                        annexb.extend_from_slice(&aes_ecb_decrypt(k, &f[..n]));
+                        annexb.extend_from_slice(&f[n..]);
+                    }
+                    None => annexb.extend_from_slice(f),
+                }
+            } else {
+                annexb.extend_from_slice(f);
+            }
+        }
+        match find_start_code(&annexb) {
+            Some(0) => out.push(Frame { is_keyframe, annexb }),
+            Some(s) => {
+                annexb.drain(..s);
+                out.push(Frame { is_keyframe, annexb });
+            }
+            None => {} // no NAL start code: drop (e.g. undecrypted keyframe)
+        }
+    }
+    out
+}
+
 /// Count how many video fragments look encrypted (no leading start code).
 pub fn count_encrypted_fragments(video: &[VideoFrame]) -> usize {
     video

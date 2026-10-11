@@ -20,7 +20,7 @@ pub enum Outcome {
     AudioOnly,
     NoKey,
     SkippedExisting,
-    FfmpegError(String),
+    MuxError(String),
     ReadError(String),
 }
 
@@ -31,7 +31,7 @@ impl Outcome {
             Outcome::AudioOnly => "audio-only",
             Outcome::NoKey => "no-key",
             Outcome::SkippedExisting => "skipped-existing",
-            Outcome::FfmpegError(_) => "ffmpeg-error",
+            Outcome::MuxError(_) => "mux-error",
             Outcome::ReadError(_) => "read-error",
         }
     }
@@ -52,7 +52,8 @@ pub fn convert_file(
     if raw {
         remux::write_raw(&es, &audio, &out.with_extension(""), codec)?;
     } else {
-        remux::remux(&es, &audio, out, fps, codec)?;
+        let frames = crate::crypto::build_frames(&video, key);
+        remux::mux_mp4(&frames, &audio, out, fps, codec)?;
     }
     Ok(())
 }
@@ -107,17 +108,18 @@ fn convert_one(
         Some(k) => {
             let es = build_h264(&video, Some(&k));
             let codec = crate::crypto::detect_codec(&es).unwrap_or("h264");
-            match remux::remux(&es, &audio, out, fps, codec) {
+            let frames = crate::crypto::build_frames(&video, Some(&k));
+            match remux::mux_mp4(&frames, &audio, out, fps, codec) {
                 Ok(()) => Outcome::Ok,
-                Err(e) => Outcome::FfmpegError(e.to_string()),
+                Err(e) => Outcome::MuxError(e.to_string()),
             }
         }
         None => {
             if audio_only_fallback && !audio.is_empty() {
                 let m4a = out.with_extension("m4a");
-                match remux::remux_audio_only(&audio, &m4a) {
+                match remux::mux_audio_only(&audio, &m4a) {
                     Ok(()) => Outcome::AudioOnly,
-                    Err(e) => Outcome::FfmpegError(e.to_string()),
+                    Err(e) => Outcome::MuxError(e.to_string()),
                 }
             } else {
                 Outcome::NoKey
@@ -200,7 +202,7 @@ pub fn batch(
                     .lock()
                     .unwrap()
                     .push((p.display().to_string(), "no-key".into())),
-                Outcome::FfmpegError(e) | Outcome::ReadError(e) => failures
+                Outcome::MuxError(e) | Outcome::ReadError(e) => failures
                     .lock()
                     .unwrap()
                     .push((p.display().to_string(), e.clone())),
