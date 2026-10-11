@@ -173,6 +173,18 @@ fn cmd_inspect(file: &std::path::Path) -> Result<()> {
         }
         _ => println!("video: {codec_str}, resolution/fps not in header"),
     }
+    match r.audio_info {
+        Some((codec, rate, ch)) => {
+            let ch_str = match ch {
+                1 => "mono".to_string(),
+                2 => "stereo".to_string(),
+                n => format!("{n} ch"),
+            };
+            println!("audio: {codec}, {rate} Hz, {ch_str}");
+        }
+        None if r.audio_bytes > 0 => println!("audio: present ({} bytes), format unrecognized", r.audio_bytes),
+        None => println!("audio: none"),
+    }
     println!(
         "encrypted fragments (no leading start code): {} of {} video fragments",
         r.encrypted_fragments, r.frames

@@ -26,6 +26,30 @@ pub fn detect_codec(data: &[u8], file: &std::path::Path) -> Option<&'static str>
     crate::crypto::detect_codec(&pt)
 }
 
+/// Parse the first ADTS frame header of the plaintext audio: returns
+/// (codec, sample_rate_hz, channels). eufy audio is AAC-LC ADTS.
+pub fn adts_info(audio: &[u8]) -> Option<(&'static str, u32, u8)> {
+    // syncword 0xFFF, then the fixed header fields.
+    if audio.len() < 4 || audio[0] != 0xFF || (audio[1] & 0xF0) != 0xF0 {
+        return None;
+    }
+    let profile = (audio[2] >> 6) & 0x3; // audio object type - 1
+    let sfi = (audio[2] >> 2) & 0xF; // sampling frequency index
+    let channels = ((audio[2] & 0x1) << 2) | ((audio[3] >> 6) & 0x3);
+    const RATES: [u32; 13] = [
+        96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
+    ];
+    let rate = *RATES.get(sfi as usize)?;
+    let codec = match profile {
+        0 => "AAC Main",
+        1 => "AAC-LC",
+        2 => "AAC-SSR",
+        3 => "AAC-LTP",
+        _ => "AAC",
+    };
+    Some((codec, rate, channels))
+}
+
 /// Count `00 00 00`, `00 00 01`, `00 00 02` occurrences (the H.264 escape /
 /// start-code prefixes that cannot appear inside encrypted data).
 pub fn escape_count(data: &[u8]) -> usize {
@@ -45,6 +69,8 @@ pub struct Report {
     /// (fps, width, height) from the first video record header, if present.
     pub dimensions: Option<(u16, u16, u16)>,
     pub audio_bytes: usize,
+    /// (codec, sample_rate_hz, channels) from the first ADTS header, if present.
+    pub audio_info: Option<(&'static str, u32, u8)>,
     /// (region label, byte length, escape count, zero-byte %) per sampled region.
     pub regions: Vec<(String, usize, usize, f64)>,
     pub first_record_dump: String,
@@ -97,6 +123,7 @@ pub fn inspect(data: &[u8]) -> Report {
 
     let encrypted_fragments = crate::crypto::count_encrypted_fragments(&video);
     let dimensions = crate::container::video_dimensions(data);
+    let audio_info = adts_info(&audio);
     let first_record_dump = dump_first_records(&recs, data, 4);
 
     Report {
@@ -109,6 +136,7 @@ pub fn inspect(data: &[u8]) -> Report {
         encrypted_fragments,
         dimensions,
         audio_bytes: audio.len(),
+        audio_info,
         regions,
         first_record_dump,
     }
@@ -127,4 +155,21 @@ fn dump_first_records(recs: &[crate::container::Record<'_>], _data: &[u8], n: us
         ));
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adts_parses_aac_lc_16k_mono() {
+        // real eufy audio header: AAC-LC, 16 kHz, mono
+        let hdr = [0xFF, 0xF1, 0x60, 0x40, 0x15, 0xC1, 0xD0];
+        assert_eq!(adts_info(&hdr), Some(("AAC-LC", 16000, 1)));
+    }
+
+    #[test]
+    fn adts_rejects_non_adts() {
+        assert_eq!(adts_info(b"\x00\x00\x00\x01guff"), None);
+    }
 }
