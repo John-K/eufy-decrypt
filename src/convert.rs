@@ -61,9 +61,9 @@ pub fn convert_file(
 pub enum KeySource {
     /// Probe every key against the file's first keyframe.
     Probe(Vec<(Key, Option<String>)>),
-    /// Derive a per-file key from the sibling snapshot's rand + calibrated
-    /// constants.
-    Derive { serial: String, params: Params },
+    /// Derive a per-file key from the sibling snapshot's serial + rand and the
+    /// calibrated constants. `serial` overrides the snapshot's when set.
+    Derive { serial: Option<String>, params: Params },
 }
 
 impl KeySource {
@@ -71,8 +71,9 @@ impl KeySource {
         match self {
             KeySource::Probe(keys) => select_key(keys, data).copied(),
             KeySource::Derive { serial, params } => {
-                let (_hdr_serial, rand) = keys::rand_for_video(path)?;
-                Some(keyderive::derive(serial, rand, *params))
+                let (hdr_serial, rand) = keys::rand_for_video(path)?;
+                let serial = serial.clone().unwrap_or(hdr_serial);
+                Some(keyderive::derive(&serial, rand, *params))
             }
         }
     }

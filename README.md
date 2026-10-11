@@ -50,20 +50,20 @@ cargo build --release
 # 1. confirm the format and read serial/rand from an event clip
 eufy-decrypt inspect /backup/Camera00/event/202608/20260813/20260813101151.zxvideo
 
-# 2. recover this camera's derivation constants ONCE from a real keyframe
-#    (rand auto-read from the sibling snapshot). Prints offset + sfx.
-eufy-decrypt calibrate --serial T8416P0000000000 \
-    /backup/.../20260813101151.zxvideo
+# 2. recover this camera's derivation constants ONCE from a real keyframe.
+#    serial and rand are read from the clip's sibling snapshot; pass --serial
+#    only if there is no snapshot. Prints offset + sfx.
+eufy-decrypt calibrate /backup/.../20260813101151.zxvideo
 
 # 3. convert one clip with an explicit key ...
 eufy-decrypt convert in.zxvideo --out out.mp4 --key 0ADD5A67A51A0762
-#    ... or derive one key from the calibrated constants
-eufy-decrypt derive --serial T8416P0000000000 --rand 15060042 --offset 3 --sfx 12
+#    ... or derive one key, recovering serial+rand from the clip's snapshot
+eufy-decrypt derive --from in.zxvideo --offset 3 --sfx 12
 
-# 4. convert the whole card in parallel. With --serial/--offset/--sfx it derives
-#    each clip's key from its own snapshot rand (resumable; skips existing).
+# 4. convert the whole card in parallel. With --offset/--sfx it derives each
+#    clip's key from its own snapshot (serial+rand); resumable, skips existing.
 eufy-decrypt batch --source /backup/Camera00/event --dest ~/eufy_mp4 \
-    --serial T8416P0000000000 --offset 3 --sfx 12 --audio-only-fallback
+    --offset 3 --sfx 12 --audio-only-fallback
 
 # alternatively, batch against a keys.json of known keys (e.g. T8400 weekly keys)
 eufy-decrypt batch --source /backup/video/continue --dest ~/eufy_mp4 --keys keys.json
@@ -96,6 +96,11 @@ key      = UPPERHEX( digest'[16..24] )        # 16 ASCII chars = AES-128 key
 and every file's key then follows from its own `rand`. Derivation self-verifies
 against the keyframe (for H.264 and HEVC), so a wrong constant fails loudly
 instead of producing garbled video.
+
+The `serial` and per-clip `rand` are read from the sibling snapshot's
+`eufysecurity:<serial>:01<rand>:` header, so `--serial` is optional on
+`calibrate`, `derive` (with `--from <clip>`), and `batch`; pass it explicitly
+only for files that have no snapshot, such as `.dat` continuous recordings.
 
 Verified against a real T8416 (serial `T8416P0000000000`): `offset 3`, `sfx 12`,
 rand `15060042` -> key `0ADD5A67A51A0762`, which decrypts to a clean 2304x1296

@@ -44,11 +44,11 @@ enum Cmd {
     /// Recover this camera's key-derivation constants (offset, sfx) once, by
     /// trying the small constant space against a real encrypted keyframe.
     Calibrate {
-        /// Camera serial, e.g. T8416P0000000000.
-        #[arg(long)]
-        serial: String,
         /// A sample encrypted .zxvideo/.dat to calibrate against.
         sample: PathBuf,
+        /// Camera serial. Optional; recovered from the sibling snapshot if omitted.
+        #[arg(long)]
+        serial: Option<String>,
         /// This sample's rand. If omitted, read from its sibling snapshot.
         #[arg(long)]
         rand: Option<u64>,
@@ -57,10 +57,15 @@ enum Cmd {
     },
     /// Derive one AES key from serial + rand + calibrated constants.
     Derive {
+        /// Camera serial. Optional if --from points at a clip with a snapshot.
         #[arg(long)]
-        serial: String,
+        serial: Option<String>,
+        /// The rand. Optional if --from points at a clip with a snapshot.
         #[arg(long)]
-        rand: u64,
+        rand: Option<u64>,
+        /// A .zxvideo/.dat to recover serial+rand from its sibling snapshot.
+        #[arg(long)]
+        from: Option<PathBuf>,
         #[arg(long)]
         offset: usize,
         #[arg(long)]
@@ -96,7 +101,8 @@ enum Cmd {
         /// keys.json (probed per file). Optional if deriving per file.
         #[arg(long)]
         keys: Option<PathBuf>,
-        /// Derive per-file keys: camera serial.
+        /// Derive per-file keys: camera serial. Optional; recovered per file
+        /// from each clip's sibling snapshot if omitted.
         #[arg(long)]
         serial: Option<String>,
         /// Derive per-file keys: calibrated offset.
@@ -128,9 +134,11 @@ fn main() -> Result<()> {
     match cli.cmd {
         Cmd::Inspect { file } => cmd_inspect(&file),
         Cmd::Calibrate { serial, sample, rand, max_sfx } => {
-            cmd_calibrate(&serial, &sample, rand, max_sfx)
+            cmd_calibrate(serial.as_deref(), &sample, rand, max_sfx)
         }
-        Cmd::Derive { serial, rand, offset, sfx } => cmd_derive(&serial, rand, offset, sfx),
+        Cmd::Derive { serial, rand, from, offset, sfx } => {
+            cmd_derive(serial.as_deref(), rand, from.as_deref(), offset, sfx)
+        }
         Cmd::Convert { file, out, key, keys, raw, fps } => {
             cmd_convert(&file, &out, key.as_deref(), keys.as_deref(), raw, fps)
         }
@@ -174,33 +182,45 @@ fn cmd_inspect(file: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-fn resolve_rand(sample: &std::path::Path, given: Option<u64>) -> Result<(Option<String>, u64)> {
-    if let Some(r) = given {
-        return Ok((None, r));
+/// Resolve `(serial, rand)` from explicit flags, falling back to the sample's
+/// sibling snapshot header. An explicit value always overrides the sidecar.
+fn resolve_identity(
+    serial: Option<&str>,
+    rand: Option<u64>,
+    sample: &std::path::Path,
+) -> Result<(String, u64)> {
+    if let (Some(s), Some(r)) = (serial, rand) {
+        return Ok((s.to_string(), r));
     }
-    let (serial, rand) = keys::rand_for_video(sample).context(
-        "could not read a rand from a sibling snapshot; pass --rand explicitly",
-    )?;
-    Ok((Some(serial), rand))
+    let sidecar = keys::rand_for_video(sample);
+    if let Some((hs, _)) = &sidecar
+        && let Some(s) = serial
+        && hs != s
+    {
+        eprintln!("note: snapshot serial {hs} differs from --serial {s}");
+    }
+    let final_serial = serial
+        .map(str::to_string)
+        .or_else(|| sidecar.as_ref().map(|(s, _)| s.clone()))
+        .context("no serial given and none found in a sibling snapshot; pass --serial")?;
+    let final_rand = rand
+        .or_else(|| sidecar.as_ref().map(|(_, r)| *r))
+        .context("no rand given and none found in a sibling snapshot; pass --rand")?;
+    Ok((final_serial, final_rand))
 }
 
 fn cmd_calibrate(
-    serial: &str,
+    serial: Option<&str>,
     sample: &std::path::Path,
     rand: Option<u64>,
     max_sfx: u32,
 ) -> Result<()> {
     let data = std::fs::read(sample).with_context(|| format!("reading {}", sample.display()))?;
-    let (hdr_serial, rand) = resolve_rand(sample, rand)?;
-    if let Some(hs) = &hdr_serial
-        && hs != serial
-    {
-        eprintln!("note: snapshot serial {hs} differs from --serial {serial}");
-    }
+    let (serial, rand) = resolve_identity(serial, rand, sample)?;
     println!("calibrating serial {serial}, sample rand {rand} ...");
-    match keyderive::calibrate(serial, rand, &data, max_sfx) {
+    match keyderive::calibrate(&serial, rand, &data, max_sfx) {
         Some(p) => {
-            let key = keyderive::derive(serial, rand, p);
+            let key = keyderive::derive(&serial, rand, p);
             println!("VERIFIED. Camera constants:");
             println!("  offset : {}", p.offset);
             println!("  sfx    : {}", p.sfx);
@@ -208,7 +228,7 @@ fn cmd_calibrate(
             println!("  sample key (hex)  : {}", key.to_hex());
             println!(
                 "\nReuse these for the whole card:\n  \
-                 eufy-decrypt batch --source <dir> --dest <out> --serial {serial} --offset {} --sfx {}",
+                 eufy-decrypt batch --source <dir> --dest <out> --offset {} --sfx {}",
                 p.offset, p.sfx
             );
         }
@@ -220,8 +240,22 @@ fn cmd_calibrate(
     Ok(())
 }
 
-fn cmd_derive(serial: &str, rand: u64, offset: usize, sfx: u32) -> Result<()> {
-    let key = keyderive::derive(serial, rand, keyderive::Params { offset, sfx });
+fn cmd_derive(
+    serial: Option<&str>,
+    rand: Option<u64>,
+    from: Option<&std::path::Path>,
+    offset: usize,
+    sfx: u32,
+) -> Result<()> {
+    let (serial, rand) = match from {
+        Some(sample) => resolve_identity(serial, rand, sample)?,
+        None => {
+            let s = serial.context("pass --serial, or --from <clip> to recover it")?;
+            let r = rand.context("pass --rand, or --from <clip> to recover it")?;
+            (s.to_string(), r)
+        }
+    };
+    let key = keyderive::derive(&serial, rand, keyderive::Params { offset, sfx });
     println!("key (ascii): {}", String::from_utf8_lossy(&key.0));
     println!("key (hex)  : {}", key.to_hex());
     Ok(())
@@ -269,9 +303,9 @@ fn cmd_batch(
     audio_only_fallback: bool,
     limit: usize,
 ) -> Result<()> {
-    let keysrc = match (keys_path, serial, offset, sfx) {
-        (_, Some(serial), Some(offset), Some(sfx)) => convert::KeySource::Derive {
-            serial: serial.to_string(),
+    let keysrc = match (keys_path, offset, sfx) {
+        (_, Some(offset), Some(sfx)) => convert::KeySource::Derive {
+            serial: serial.map(str::to_string),
             params: Params { offset, sfx },
         },
         (Some(p), ..) => {
@@ -279,7 +313,7 @@ fn cmd_batch(
             convert::KeySource::Probe(kf.parsed()?)
         }
         _ => bail!(
-            "need either --keys <keys.json>, or --serial/--offset/--sfx to derive per-file keys (run `calibrate` first)"
+            "need either --keys <keys.json>, or --offset/--sfx to derive per-file keys (run `calibrate` first)"
         ),
     };
     let opts = convert::BatchOptions { jobs, fps, audio_only_fallback, limit };
