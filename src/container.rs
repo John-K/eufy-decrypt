@@ -89,6 +89,17 @@ fn find_magic(data: &[u8]) -> Option<usize> {
     data.windows(4).position(|w| w == MAGIC)
 }
 
+/// Read `(fps, width, height)` from the first video record's header, if the
+/// record is long enough to carry those fields.
+pub fn video_dimensions(data: &[u8]) -> Option<(u16, u16, u16)> {
+    let rec = records(data).into_iter().find(|r| r.is_video())?;
+    let m = rec.offset;
+    let fps = read_u16(data, m + OFF_FPS)?;
+    let width = read_u16(data, m + OFF_WIDTH)?;
+    let height = read_u16(data, m + OFF_HEIGHT)?;
+    Some((fps, width, height))
+}
+
 /// A reassembled video frame: a P-frame carries one fragment; an I-frame may be
 /// split across several fragments that must each be decrypted before joining.
 #[derive(Debug, Clone)]

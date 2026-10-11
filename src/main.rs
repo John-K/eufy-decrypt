@@ -161,6 +161,18 @@ fn cmd_inspect(file: &std::path::Path) -> Result<()> {
         "frames: {} (tagged I-frames {}, P-frames {}), audio: {} bytes",
         r.frames, r.iframes, r.pframes, r.audio_bytes
     );
+    let codec = inspect::detect_codec(&data, file);
+    let codec_str = match codec {
+        Some("hevc") => "H.265/HEVC",
+        Some("h264") => "H.264",
+        _ => "unknown (needs a snapshot to decrypt a keyframe)",
+    };
+    match r.dimensions {
+        Some((fps, w, h)) if w != 0 && h != 0 => {
+            println!("video: {codec_str}, {w}x{h}, {fps} fps")
+        }
+        _ => println!("video: {codec_str}, resolution/fps not in header"),
+    }
     println!(
         "encrypted fragments (no leading start code): {} of {} video fragments",
         r.encrypted_fragments, r.frames

@@ -21,6 +21,11 @@ pub const OFF_SIZE_FIELD: usize = 6;
 pub const OFF_FRAME_TYPE: usize = 10;
 /// u32 little-endian payload length.
 pub const OFF_PAYLOAD_LEN: usize = 16;
+/// u16 little-endian fields in a video record header (present when the record
+/// is long enough to include them).
+pub const OFF_FPS: usize = 24;
+pub const OFF_WIDTH: usize = 26;
+pub const OFF_HEIGHT: usize = 28;
 
 /// Record size field is this much smaller than the real record size.
 pub const SIZE_FIELD_BIAS: u32 = 16;

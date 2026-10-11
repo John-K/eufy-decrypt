@@ -9,6 +9,23 @@
 
 use crate::container::{records, split};
 
+/// Confirm the video codec by decrypting one keyframe. Needs a key, so this
+/// auto-calibrates from the file's own sibling snapshot (serial + rand). Returns
+/// "h264" / "hevc", or None if no key could be obtained or the codec is unclear.
+pub fn detect_codec(data: &[u8], file: &std::path::Path) -> Option<&'static str> {
+    let (serial, rand) = crate::keys::rand_for_video(file)?;
+    let params = crate::keyderive::calibrate(&serial, rand, data, 256)?;
+    let key = crate::keyderive::derive(&serial, rand, params);
+    let (video, _) = split(data);
+    let frame = video
+        .iter()
+        .find(|f| f.fragments.first().is_some_and(|fr| crate::crypto::fragment_is_encrypted(fr)))?;
+    let frag0 = frame.fragments.first()?;
+    let n = frag0.len().min(crate::format::KF_ENC_PREFIX);
+    let pt = crate::crypto::decrypt_iframe(&key, &[frag0[..n].to_vec()]);
+    crate::crypto::detect_codec(&pt)
+}
+
 /// Count `00 00 00`, `00 00 01`, `00 00 02` occurrences (the H.264 escape /
 /// start-code prefixes that cannot appear inside encrypted data).
 pub fn escape_count(data: &[u8]) -> usize {
@@ -25,6 +42,8 @@ pub struct Report {
     pub iframes: usize,
     pub pframes: usize,
     pub encrypted_fragments: usize,
+    /// (fps, width, height) from the first video record header, if present.
+    pub dimensions: Option<(u16, u16, u16)>,
     pub audio_bytes: usize,
     /// (region label, byte length, escape count, zero-byte %) per sampled region.
     pub regions: Vec<(String, usize, usize, f64)>,
@@ -77,6 +96,7 @@ pub fn inspect(data: &[u8]) -> Report {
     }
 
     let encrypted_fragments = crate::crypto::count_encrypted_fragments(&video);
+    let dimensions = crate::container::video_dimensions(data);
     let first_record_dump = dump_first_records(&recs, data, 4);
 
     Report {
@@ -87,6 +107,7 @@ pub fn inspect(data: &[u8]) -> Report {
         iframes,
         pframes,
         encrypted_fragments,
+        dimensions,
         audio_bytes: audio.len(),
         regions,
         first_record_dump,
