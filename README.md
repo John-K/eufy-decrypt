@@ -67,7 +67,12 @@ eufy-decrypt convert in.zxvideo --out out.mp4 --key 0ADD5A67A51A0762
 #   derive one key, recovering serial+rand from the clip's snapshot:
 eufy-decrypt derive --from in.zxvideo --offset 3 --sfx 12
 
-# alternatively, batch against a keys.json of known keys (e.g. T8400 weekly keys)
+# for a continuous (T8400) card, first derive a keys.json of weekly keys from
+# continuefilelink.dat (one key per weekly code). The serial is required (no
+# snapshot); --offset/--sfx auto-calibrate against a sibling .dat when omitted:
+eufy-decrypt keys /backup/video/continue/continuefilelink.dat \
+    --serial T8400XXXXXXXXXXXX --out keys.json
+# then batch against that keys.json of known keys
 eufy-decrypt batch --source /backup/video/continue --dest ~/eufy_mp4 --keys keys.json
 
 # audio needs no key at all:

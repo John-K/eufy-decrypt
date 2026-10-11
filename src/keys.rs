@@ -3,6 +3,7 @@
 use crate::container::split;
 use crate::crypto::{Key, decrypt_iframe, looks_like_keyframe};
 use crate::format::KF_ENC_PREFIX;
+use crate::keyderive::{self, Params};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -32,7 +33,6 @@ impl KeyFile {
         Ok(kf)
     }
 
-    #[allow(dead_code)] // for writing keys.json in the T8400 continuefilelink flow
     pub fn save(&self, path: &Path) -> Result<()> {
         let text = serde_json::to_string_pretty(self)?;
         std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))?;
@@ -146,14 +146,12 @@ fn read_head(path: &Path, n: usize) -> std::io::Result<Vec<u8>> {
 
 /// An entry parsed from `continuefilelink.dat`.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct LinkEntry {
     pub dat_name: String,
     /// 10-digit code, `"01" + rand`.
     pub code: String,
 }
 
-#[allow(dead_code)]
 impl LinkEntry {
     /// The weekly `rand` = the code with its leading `"01"` stripped.
     pub fn rand(&self) -> Option<u64> {
@@ -166,7 +164,6 @@ impl LinkEntry {
 /// The file is text-ish: each line references a `.dat` path and a trailing
 /// 10-digit code. We scan tolerantly rather than assume a fixed field width,
 /// so a slightly different layout on another model still yields the codes.
-#[allow(dead_code)] // T8400 continuefilelink.dat support
 pub fn parse_link_file(data: &[u8]) -> Vec<LinkEntry> {
     let text = String::from_utf8_lossy(data);
     let mut out = Vec::new();
@@ -193,7 +190,6 @@ pub fn parse_link_file(data: &[u8]) -> Vec<LinkEntry> {
 }
 
 /// Distinct week codes across a link file, sorted.
-#[allow(dead_code)] // T8400 continuefilelink.dat support
 pub fn distinct_codes(entries: &[LinkEntry]) -> Vec<String> {
     entries
         .iter()
@@ -201,6 +197,35 @@ pub fn distinct_codes(entries: &[LinkEntry]) -> Vec<String> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
+}
+
+/// Build a `keys.json` by deriving one AES key per distinct weekly code in a
+/// parsed `continuefilelink.dat`. The derivation is identical to the event-clip
+/// path; only the `rand` source differs (the weekly code instead of a snapshot).
+/// Each entry is labelled with the earliest recording date seen for that code.
+pub fn derive_key_file(entries: &[LinkEntry], serial: &str, params: Params) -> KeyFile {
+    let mut keys = Vec::new();
+    for code in distinct_codes(entries) {
+        let Some(rand) = code.strip_prefix("01").and_then(|s| s.parse::<u64>().ok()) else {
+            continue;
+        };
+        let key = keyderive::derive(serial, rand, params);
+        let date = entries
+            .iter()
+            .filter(|e| e.code == code)
+            .filter_map(|e| e.dat_name.get(..8))
+            .min()
+            .map(str::to_string);
+        let label = match date {
+            Some(d) => format!("{d} code {code}"),
+            None => format!("code {code}"),
+        };
+        keys.push(KeyEntry {
+            key: String::from_utf8_lossy(&key.0).into_owned(),
+            label: Some(label),
+        });
+    }
+    KeyFile { keys }
 }
 
 #[cfg(test)]
@@ -226,6 +251,23 @@ mod tests {
             LinkEntry { dat_name: "c.dat".into(), code: "0122".into() },
         ];
         assert_eq!(distinct_codes(&e), vec!["0111".to_string(), "0122".into()]);
+    }
+
+    /// One key per distinct weekly code, derived via the same algorithm as the
+    /// event-clip path. Pinned against the known-answer vector (serial
+    /// T8416P0000000000, code 0115060042 -> key 0ADD5A67A51A0762): the leading
+    /// "01" is stripped to rand 15060042, so `keys` and `derive` agree.
+    #[test]
+    fn derive_key_file_one_per_code() {
+        let entries = vec![
+            LinkEntry { dat_name: "20260814090000.dat".into(), code: "0115060042".into() },
+            LinkEntry { dat_name: "20260813101151.dat".into(), code: "0115060042".into() },
+        ];
+        let kf = derive_key_file(&entries, "T8416P0000000000", Params { offset: 3, sfx: 12 });
+        assert_eq!(kf.keys.len(), 1); // deduplicated by code
+        assert_eq!(kf.keys[0].key, "0ADD5A67A51A0762");
+        // labelled with the earliest recording date for that code
+        assert_eq!(kf.keys[0].label.as_deref(), Some("20260813 code 0115060042"));
     }
 }
 

@@ -68,6 +68,29 @@ enum Cmd {
         #[arg(long)]
         sfx: u32,
     },
+    /// Derive a keys.json of weekly keys from a T8400 `continuefilelink.dat`.
+    ///
+    /// Continuous cameras rotate one key per week and have no per-clip snapshot,
+    /// so the serial must be given. `--offset`/`--sfx` are auto-calibrated
+    /// against a referenced `.dat` beside the link file when omitted.
+    Keys {
+        /// Path to `continuefilelink.dat`.
+        link: PathBuf,
+        /// Camera serial (required: continuous recordings carry no snapshot).
+        #[arg(long)]
+        serial: String,
+        /// Calibrated offset. Optional; auto-calibrated against a sibling .dat.
+        #[arg(long)]
+        offset: Option<usize>,
+        /// Calibrated sfx. Optional; auto-calibrated against a sibling .dat.
+        #[arg(long)]
+        sfx: Option<u32>,
+        /// Where to write the keys.json.
+        #[arg(long, default_value = "keys.json")]
+        out: PathBuf,
+        #[arg(long, default_value_t = 256)]
+        max_sfx: u32,
+    },
     /// Convert a single .dat/.zxvideo to MP4.
     Convert {
         file: PathBuf,
@@ -135,6 +158,9 @@ fn main() -> Result<()> {
         }
         Cmd::Derive { serial, rand, from, offset, sfx } => {
             cmd_derive(serial.as_deref(), rand, from.as_deref(), offset, sfx)
+        }
+        Cmd::Keys { link, serial, offset, sfx, out, max_sfx } => {
+            cmd_keys(&link, &serial, offset, sfx, &out, max_sfx)
         }
         Cmd::Convert { file, out, key, keys, raw, fps } => {
             cmd_convert(&file, &out, key.as_deref(), keys.as_deref(), raw, fps)
@@ -279,6 +305,87 @@ fn cmd_derive(
     let key = keyderive::derive(&serial, rand, keyderive::Params { offset, sfx });
     println!("key (ascii): {}", String::from_utf8_lossy(&key.0));
     println!("key (hex)  : {}", key.to_hex());
+    Ok(())
+}
+
+/// Calibrate `(offset, sfx)` for a continuous camera using a `.dat` referenced
+/// by the link file that is present on disk beside it (its weekly code supplies
+/// the sample's rand).
+fn autocalibrate_from_link(
+    link: &std::path::Path,
+    serial: &str,
+    entries: &[keys::LinkEntry],
+    max_sfx: u32,
+) -> Result<Params> {
+    let dir = link.parent().unwrap_or_else(|| std::path::Path::new("."));
+    for e in entries {
+        let p = dir.join(&e.dat_name);
+        let (Ok(data), Some(rand)) = (std::fs::read(&p), e.rand()) else { continue };
+        if let Some(params) = keyderive::calibrate(serial, rand, &data, max_sfx) {
+            eprintln!(
+                "calibrated against {}: offset {}, sfx {}",
+                e.dat_name, params.offset, params.sfx
+            );
+            return Ok(params);
+        }
+    }
+    bail!(
+        "could not auto-calibrate: no .dat referenced by {} was found beside it (and decryptable).\n\
+         Run this from the card so the .dat files are reachable, or pass --offset/--sfx from `calibrate`.",
+        link.display()
+    )
+}
+
+fn cmd_keys(
+    link: &std::path::Path,
+    serial: &str,
+    offset: Option<usize>,
+    sfx: Option<u32>,
+    out: &std::path::Path,
+    max_sfx: u32,
+) -> Result<()> {
+    let data = std::fs::read(link).with_context(|| format!("reading {}", link.display()))?;
+    let entries = keys::parse_link_file(&data);
+    if entries.is_empty() {
+        bail!("no recording/code entries found in {}", link.display());
+    }
+    let params = match (offset, sfx) {
+        (Some(offset), Some(sfx)) => Params { offset, sfx },
+        _ => autocalibrate_from_link(link, serial, &entries, max_sfx)?,
+    };
+
+    let kf = keys::derive_key_file(&entries, serial, params);
+
+    // Verify each week's key against a referenced .dat that is present on disk,
+    // before writing anything, so a bad serial never leaves a misleading file.
+    let dir = link.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let (mut checked, mut verified) = (0usize, 0usize);
+    for code in keys::distinct_codes(&entries) {
+        let Some(entry) = entries.iter().find(|e| e.code == code && dir.join(&e.dat_name).exists())
+        else {
+            continue;
+        };
+        let Some(rand) = entry.rand() else { continue };
+        let Ok(sample) = std::fs::read(dir.join(&entry.dat_name)) else { continue };
+        let key = keyderive::derive(serial, rand, params);
+        checked += 1;
+        if keyderive::verify_against_keyframe(&key, &sample) {
+            verified += 1;
+        } else {
+            eprintln!("warning: derived key for code {code} did NOT decrypt {}", entry.dat_name);
+        }
+    }
+    if checked > 0 && verified < checked {
+        bail!("some derived keys failed to decrypt — check the serial, or re-run `calibrate`");
+    }
+
+    keys::KeyFile::save(&kf, out)?;
+    println!("wrote {} ({} weekly keys)", out.display(), kf.keys.len());
+    if checked > 0 {
+        println!("verified {verified}/{checked} against .dat files present on disk");
+    } else {
+        println!("(no referenced .dat files beside the link file, so keys were not verified)");
+    }
     Ok(())
 }
 
