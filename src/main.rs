@@ -24,10 +24,7 @@ use std::path::PathBuf;
 #[command(
     name = "eufy-decrypt",
     about = "Decrypt eufy camera SD-card recordings to MP4 (offline).",
-    long_about = "Decrypt eufy camera SD-card .dat/.zxvideo recordings to MP4, fully offline.\n\n\
-                  SAFETY: the card is usually the only copy. Image it read-only and verify \
-                  with sha256 BEFORE running anything. This tool only reads sources and only \
-                  writes to the destinations you name.",
+    long_about = "Decrypt eufy camera SD-card .dat/.zxvideo recordings to MP4, fully offline.",
     version
 )]
 struct Cli {
