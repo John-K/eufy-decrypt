@@ -90,25 +90,25 @@ enum Cmd {
     },
     /// Batch convert every .dat/.zxvideo under a directory.
     ///
-    /// Two key modes: supply --serial/--offset/--sfx to derive each file's key
-    /// from its sibling snapshot's rand (event-clip cameras), or supply --keys
-    /// with a keys.json whose entries are probed against each file.
+    /// For event-clip cameras, `batch --source <dir> --dest <dir>` is enough:
+    /// it auto-calibrates the derivation constants from the first encrypted clip
+    /// and derives each file's key from its own snapshot. Pass --offset/--sfx to
+    /// skip calibration, or --keys to probe a keys.json instead.
     Batch {
         #[arg(long)]
         source: PathBuf,
         #[arg(long)]
         dest: PathBuf,
-        /// keys.json (probed per file). Optional if deriving per file.
+        /// keys.json (probed per file) instead of deriving keys.
         #[arg(long)]
         keys: Option<PathBuf>,
-        /// Derive per-file keys: camera serial. Optional; recovered per file
-        /// from each clip's sibling snapshot if omitted.
+        /// Camera serial. Optional; recovered from each clip's snapshot.
         #[arg(long)]
         serial: Option<String>,
-        /// Derive per-file keys: calibrated offset.
+        /// Calibrated offset. Optional; auto-calibrated if omitted.
         #[arg(long)]
         offset: Option<usize>,
-        /// Derive per-file keys: calibrated sfx.
+        /// Calibrated sfx. Optional; auto-calibrated if omitted.
         #[arg(long)]
         sfx: Option<u32>,
         #[arg(long, default_value_t = 0)]
@@ -290,6 +290,46 @@ fn cmd_convert(
     Ok(())
 }
 
+/// Find the first clip under `source` that has an encrypted keyframe and a
+/// recoverable rand, and calibrate `(offset, sfx)` against it. Returns the
+/// params and the serial used.
+fn auto_calibrate(
+    source: &std::path::Path,
+    serial: Option<&str>,
+    max_sfx: u32,
+) -> Result<(keyderive::Params, String)> {
+    let mut files: Vec<std::path::PathBuf> = walkdir::WalkDir::new(source)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .map(|e| e.into_path())
+        .filter(|p| {
+            p.extension()
+                .map(|x| x == "dat" || x == "zxvideo")
+                .unwrap_or(false)
+        })
+        .collect();
+    files.sort();
+
+    for p in &files {
+        let Some((hdr_serial, rand)) = keys::rand_for_video(p) else { continue };
+        let serial = serial.unwrap_or(&hdr_serial).to_string();
+        let Ok(data) = std::fs::read(p) else { continue };
+        let (video, _) = container::split(&data);
+        if crypto::count_encrypted_fragments(&video) == 0 {
+            continue;
+        }
+        if let Some(params) = keyderive::calibrate(&serial, rand, &data, max_sfx) {
+            return Ok((params, serial));
+        }
+    }
+    bail!(
+        "could not auto-calibrate: no clip under {} had both an encrypted keyframe and a \
+         recoverable rand that verified. Pass --offset/--sfx (from `calibrate`), or --keys.",
+        source.display()
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn cmd_batch(
     source: &std::path::Path,
@@ -304,17 +344,28 @@ fn cmd_batch(
     limit: usize,
 ) -> Result<()> {
     let keysrc = match (keys_path, offset, sfx) {
+        // Explicit constants: derive directly.
         (_, Some(offset), Some(sfx)) => convert::KeySource::Derive {
             serial: serial.map(str::to_string),
             params: Params { offset, sfx },
         },
+        // keys.json: probe known keys.
         (Some(p), ..) => {
             let kf = KeyFile::load(p)?;
             convert::KeySource::Probe(kf.parsed()?)
         }
-        _ => bail!(
-            "need either --keys <keys.json>, or --offset/--sfx to derive per-file keys (run `calibrate` first)"
-        ),
+        // Nothing supplied: auto-calibrate from the first encrypted clip.
+        _ => {
+            let (params, used_serial) = auto_calibrate(source, serial, 256)?;
+            println!(
+                "auto-calibrated from {used_serial}: offset {}, sfx {}",
+                params.offset, params.sfx
+            );
+            convert::KeySource::Derive {
+                serial: serial.map(str::to_string),
+                params,
+            }
+        }
     };
     let opts = convert::BatchOptions { jobs, fps, audio_only_fallback, limit };
     let summary = convert::batch(source, dest, &keysrc, &opts)?;

@@ -50,20 +50,21 @@ cargo build --release
 # 1. confirm the format and read serial/rand from an event clip
 eufy-decrypt inspect /backup/Camera00/event/202608/20260813/20260813101151.zxvideo
 
-# 2. recover this camera's derivation constants ONCE from a real keyframe.
-#    serial and rand are read from the clip's sibling snapshot; pass --serial
-#    only if there is no snapshot. Prints offset + sfx.
-eufy-decrypt calibrate /backup/.../20260813101151.zxvideo
-
-# 3. convert one clip with an explicit key ...
-eufy-decrypt convert in.zxvideo --out out.mp4 --key 0ADD5A67A51A0762
-#    ... or derive one key, recovering serial+rand from the clip's snapshot
-eufy-decrypt derive --from in.zxvideo --offset 3 --sfx 12
-
-# 4. convert the whole card in parallel. With --offset/--sfx it derives each
-#    clip's key from its own snapshot (serial+rand); resumable, skips existing.
+# 2. convert the whole card in parallel. For event-clip cameras this is all you
+#    need: it auto-calibrates the derivation constants from the first encrypted
+#    clip and derives each file's key from its own snapshot. Resumable; skips
+#    existing. Add --offset/--sfx to skip calibration, or --keys to use a
+#    keys.json of known keys.
 eufy-decrypt batch --source /backup/Camera00/event --dest ~/eufy_mp4 \
-    --offset 3 --sfx 12 --audio-only-fallback
+    --audio-only-fallback
+
+# optional one-offs:
+#   recover the constants explicitly (prints offset + sfx):
+eufy-decrypt calibrate /backup/.../20260813101151.zxvideo
+#   convert one clip with an explicit key:
+eufy-decrypt convert in.zxvideo --out out.mp4 --key 0ADD5A67A51A0762
+#   derive one key, recovering serial+rand from the clip's snapshot:
+eufy-decrypt derive --from in.zxvideo --offset 3 --sfx 12
 
 # alternatively, batch against a keys.json of known keys (e.g. T8400 weekly keys)
 eufy-decrypt batch --source /backup/video/continue --dest ~/eufy_mp4 --keys keys.json
