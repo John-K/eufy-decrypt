@@ -1,0 +1,248 @@
+//! Key management: `keys.json`, `continuefilelink.dat`, and per-file selection.
+
+use crate::container::split;
+use crate::crypto::{Key, decrypt_iframe, looks_like_h264};
+use crate::format::KF_ENC_PREFIX;
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
+use std::path::Path;
+
+/// One entry in `keys.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyEntry {
+    /// 16 ASCII chars or 32 hex chars.
+    pub key: String,
+    /// Optional human label, e.g. the week code or date range.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyFile {
+    pub keys: Vec<KeyEntry>,
+}
+
+impl KeyFile {
+    pub fn load(path: &Path) -> Result<KeyFile> {
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let kf: KeyFile =
+            serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        Ok(kf)
+    }
+
+    #[allow(dead_code)] // for writing keys.json in the T8400 continuefilelink flow
+    pub fn save(&self, path: &Path) -> Result<()> {
+        let text = serde_json::to_string_pretty(self)?;
+        std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))?;
+        Ok(())
+    }
+
+    /// Parse every entry's key once.
+    pub fn parsed(&self) -> Result<Vec<(Key, Option<String>)>> {
+        self.keys
+            .iter()
+            .map(|e| Ok((Key::parse(&e.key)?, e.label.clone())))
+            .collect()
+    }
+}
+
+/// Decide which of `keys` decrypts `dat` by probing its first keyframe.
+pub fn select_key<'a>(keys: &'a [(Key, Option<String>)], dat: &[u8]) -> Option<&'a Key> {
+    let (video, _) = split(dat);
+    let frame = video.iter().find(|f| f.is_iframe)?;
+    let frag0 = frame.fragments.first()?;
+    let n = frag0.len().min(KF_ENC_PREFIX);
+    let probe = &frag0[..n];
+    for (key, _) in keys {
+        let pt = decrypt_iframe(key, &[probe.to_vec()]);
+        if looks_like_h264(&pt) {
+            return Some(key);
+        }
+    }
+    None
+}
+
+/// A parsed `eufysecurity:<serial>:<code>:<ciphertext...>` media header, as
+/// found at the start of encrypted snapshot/crop JPEGs (and described in the
+/// WOOT'24 paper). The `code` is `"01" + rand`; the same rand keys that event's
+/// video keyframes, so the snapshot gives us the per-file rand directly.
+#[derive(Debug, Clone)]
+pub struct EufyHeader {
+    pub serial: String,
+    pub code: String,
+    /// Byte offset where the encrypted payload begins (after the third colon).
+    #[allow(dead_code)] // offset where ciphertext begins; used when decrypting the JPEG itself
+    pub payload_offset: usize,
+}
+
+impl EufyHeader {
+    pub fn rand(&self) -> Option<u64> {
+        self.code.strip_prefix("01").unwrap_or(&self.code).parse().ok()
+    }
+}
+
+/// Parse a `eufysecurity:...` header from the start of `data`, if present.
+pub fn parse_eufy_header(data: &[u8]) -> Option<EufyHeader> {
+    const PREFIX: &[u8] = b"eufysecurity:";
+    if !data.starts_with(PREFIX) {
+        return None;
+    }
+    // Find the next two colons after the prefix: serial, then code.
+    let rest = &data[PREFIX.len()..];
+    let c1 = rest.iter().position(|&b| b == b':')?;
+    let serial = String::from_utf8_lossy(&rest[..c1]).into_owned();
+    let after_serial = &rest[c1 + 1..];
+    let c2 = after_serial.iter().position(|&b| b == b':')?;
+    let code = String::from_utf8_lossy(&after_serial[..c2]).into_owned();
+    let payload_offset = PREFIX.len() + c1 + 1 + c2 + 1;
+    Some(EufyHeader { serial, code, payload_offset })
+}
+
+/// Given a `.zxvideo`/`.dat` path, find the per-event `rand` from a sibling
+/// `*_snapshot.jpg` (or any sibling eufysecurity-headered JPEG with the same
+/// timestamp stem).
+pub fn rand_for_video(video_path: &Path) -> Option<(String, u64)> {
+    let dir = video_path.parent()?;
+    let stem = video_path.file_stem()?.to_string_lossy().into_owned();
+    // Preferred: "<stem>_snapshot.jpg"; fall back to any "<stem>*.jpg".
+    let candidates = [
+        dir.join(format!("{stem}_snapshot.jpg")),
+        dir.join(format!("{stem}.jpg")),
+    ];
+    let mut paths: Vec<std::path::PathBuf> = candidates.to_vec();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().map(|x| x == "jpg").unwrap_or(false)
+                && p.file_name()
+                    .map(|n| n.to_string_lossy().starts_with(&stem))
+                    .unwrap_or(false)
+            {
+                paths.push(p);
+            }
+        }
+    }
+    for p in paths {
+        if let Ok(head) = read_head(&p, 64)
+            && let Some(h) = parse_eufy_header(&head)
+            && let Some(rand) = h.rand()
+        {
+            return Some((h.serial, rand));
+        }
+    }
+    None
+}
+
+fn read_head(path: &Path, n: usize) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path)?;
+    let mut buf = vec![0u8; n];
+    let got = f.read(&mut buf)?;
+    buf.truncate(got);
+    Ok(buf)
+}
+
+/// An entry parsed from `continuefilelink.dat`.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct LinkEntry {
+    pub dat_name: String,
+    /// 10-digit code, `"01" + rand`.
+    pub code: String,
+}
+
+#[allow(dead_code)]
+impl LinkEntry {
+    /// The weekly `rand` = the code with its leading `"01"` stripped.
+    pub fn rand(&self) -> Option<u64> {
+        self.code.strip_prefix("01")?.parse().ok()
+    }
+}
+
+/// Parse `continuefilelink.dat`, mapping each recording to its 10-digit code.
+///
+/// The file is text-ish: each line references a `.dat` path and a trailing
+/// 10-digit code. We scan tolerantly rather than assume a fixed field width,
+/// so a slightly different layout on another model still yields the codes.
+#[allow(dead_code)] // T8400 continuefilelink.dat support
+pub fn parse_link_file(data: &[u8]) -> Vec<LinkEntry> {
+    let text = String::from_utf8_lossy(data);
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let dat = line
+            .split_whitespace()
+            .find(|t| t.ends_with(".dat"))
+            .map(|t| {
+                Path::new(t)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| t.to_string())
+            });
+        // last 10-digit run on the line, starting with "01"
+        let code = line
+            .split(|c: char| !c.is_ascii_digit())
+            .rfind(|t| t.len() == 10 && t.starts_with("01"))
+            .map(|s| s.to_string());
+        if let (Some(dat_name), Some(code)) = (dat, code) {
+            out.push(LinkEntry { dat_name, code });
+        }
+    }
+    out
+}
+
+/// Distinct week codes across a link file, sorted.
+#[allow(dead_code)] // T8400 continuefilelink.dat support
+pub fn distinct_codes(entries: &[LinkEntry]) -> Vec<String> {
+    entries
+        .iter()
+        .map(|e| e.code.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn link_parsing() {
+        let sample =
+            b"/media/mmcblk0p1/video/continue/20261007105210.dat   0163419399\n\njunk line\n";
+        let entries = parse_link_file(sample);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].dat_name, "20261007105210.dat");
+        assert_eq!(entries[0].code, "0163419399");
+        assert_eq!(entries[0].rand(), Some(63419399));
+    }
+
+    #[test]
+    fn distinct() {
+        let e = vec![
+            LinkEntry { dat_name: "a.dat".into(), code: "0111".into() },
+            LinkEntry { dat_name: "b.dat".into(), code: "0111".into() },
+            LinkEntry { dat_name: "c.dat".into(), code: "0122".into() },
+        ];
+        assert_eq!(distinct_codes(&e), vec!["0111".to_string(), "0122".into()]);
+    }
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::*;
+    #[test]
+    fn parse_eufy_header_fields() {
+        let h = parse_eufy_header(b"eufysecurity:T8416P0000000000:0115060042:\xee\xca\xdf").unwrap();
+        assert_eq!(h.serial, "T8416P0000000000");
+        assert_eq!(h.code, "0115060042");
+        assert_eq!(h.rand(), Some(15060042));
+        assert_eq!(h.payload_offset, 41);
+        assert_eq!(&b"eufysecurity:T8416P0000000000:0115060042:\xee\xca\xdf"[h.payload_offset..], b"\xee\xca\xdf");
+    }
+    #[test]
+    fn rejects_plain_jpeg() {
+        assert!(parse_eufy_header(b"\xff\xd8\xff\xe0JFIF").is_none());
+    }
+}

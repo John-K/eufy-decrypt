@@ -1,0 +1,9 @@
+/target
+
+# secrets: derived AES keys are specific to your camera
+keys.json
+file_keys.json
+*.mp4
+*.h264
+*.aac
+*.m4a
