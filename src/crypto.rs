@@ -111,10 +111,12 @@ pub fn build_video_stream(video: &[VideoFrame], key: Option<&Key>) -> Vec<u8> {
     es
 }
 
-/// One decoded access unit for the muxer: Annex-B bytes plus a sync flag.
+/// One decoded access unit for the muxer: Annex-B bytes, a sync flag, and the
+/// source record's presentation timestamp (ms) when the container carried one.
 pub struct Frame {
     pub is_keyframe: bool,
     pub annexb: Vec<u8>,
+    pub ts_ms: Option<u32>,
 }
 
 /// Reconstruct per-frame Annex-B access units (one `Frame` per video frame),
@@ -141,11 +143,12 @@ pub fn build_frames(video: &[VideoFrame], key: Option<&Key>) -> Vec<Frame> {
                 annexb.extend_from_slice(f);
             }
         }
+        let ts_ms = frame.ts_ms;
         match find_start_code(&annexb) {
-            Some(0) => out.push(Frame { is_keyframe, annexb }),
+            Some(0) => out.push(Frame { is_keyframe, annexb, ts_ms }),
             Some(s) => {
                 annexb.drain(..s);
-                out.push(Frame { is_keyframe, annexb });
+                out.push(Frame { is_keyframe, annexb, ts_ms });
             }
             None => {} // no NAL start code: drop (e.g. undecrypted keyframe)
         }

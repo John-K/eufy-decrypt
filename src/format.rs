@@ -27,6 +27,15 @@ pub const OFF_FPS: usize = 24;
 pub const OFF_WIDTH: usize = 26;
 pub const OFF_HEIGHT: usize = 28;
 
+/// u32 little-endian presentation timestamp, in milliseconds on the camera's
+/// monotonic clock, located this many bytes *before* the record's payload (so
+/// at `payload_start - TS_BEFORE_PAYLOAD`). This holds for both video (38-byte
+/// header -> offset 30) and audio (32-byte header -> offset 24) records. The
+/// clock is relative (device uptime), so only deltas between records are
+/// meaningful; they let the muxer time frames exactly instead of assuming a
+/// constant frame rate.
+pub const TS_BEFORE_PAYLOAD: usize = 8;
+
 /// Record size field is this much smaller than the real record size.
 pub const SIZE_FIELD_BIAS: u32 = 16;
 

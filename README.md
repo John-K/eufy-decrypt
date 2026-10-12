@@ -38,7 +38,10 @@ container:
 In both, audio and inter-frames are plaintext; only the **first 128 bytes of each
 keyframe fragment** are AES-128-ECB encrypted. The tool decides what to decrypt
 by the Annex-B start code, so it also handles cameras that tag every record as a
-keyframe. Video is H.264 or H.265/HEVC; the codec is auto-detected before remux.
+keyframe. Video is H.264 or H.265/HEVC; the codec is auto-detected before remux. Each
+record carries a millisecond timestamp, so frames are timed exactly in the MP4
+(tolerating dropped frames) instead of assuming a constant rate; `--fps` is only
+a fallback for clips whose records lack timestamps.
 Format constants live in `src/format.rs`; **run `inspect` first on any other
 model** to confirm the layout before trusting a decrypt.
 

@@ -81,6 +81,32 @@ fn sfi_to_hz(i: u8) -> Option<u32> {
     RATES.get(i as usize).copied()
 }
 
+/// Decide video sample timing. Prefer the container's per-frame millisecond
+/// timestamps — exact and tolerant of dropped frames — and fall back to a
+/// constant `fps` when they are absent or implausible. Returns the video
+/// timescale, each sample's duration in that timescale, and each sample's
+/// presentation start in seconds (used to interleave with audio).
+fn video_timing(frames: &[Frame], fps: u32) -> (NonZeroU32, Vec<u32>, Vec<f64>) {
+    const MAX_GAP_MS: u32 = 10_000;
+    let n = frames.len();
+    let ts: Option<Vec<u32>> = frames.iter().map(|f| f.ts_ms).collect();
+    if let Some(ts) = ts {
+        let sane = ts.windows(2).all(|w| w[1] >= w[0] && w[1] - w[0] <= MAX_GAP_MS);
+        if n >= 2 && sane && ts[n - 1] > ts[0] {
+            let scale = NonZeroU32::new(1000).unwrap();
+            let mut durations: Vec<u32> = (0..n - 1).map(|i| (ts[i + 1] - ts[i]).max(1)).collect();
+            durations.push(*durations.last().unwrap()); // last frame: reuse prior delta
+            let t0 = ts[0] as f64;
+            let starts = ts.iter().map(|&t| (t as f64 - t0) / 1000.0).collect();
+            return (scale, durations, starts);
+        }
+    }
+    let fps = if fps == 0 { DEFAULT_FPS } else { fps };
+    let scale = NonZeroU32::new(fps).unwrap_or(NonZeroU32::new(DEFAULT_FPS).unwrap());
+    let starts = (0..n).map(|i| i as f64 / fps as f64).collect();
+    (scale, vec![1u32; n], starts)
+}
+
 /// Build the video sample entry and length-prefixed per-frame samples.
 fn build_video(frames: &[Frame], codec: &str) -> Result<(SampleEntry, Vec<Vec<u8>>)> {
     let kf = frames
@@ -141,7 +167,7 @@ pub fn mux_mp4(
     let (video_entry, video_samples) = build_video(frames, codec)?;
     let audio = parse_audio(aac_bytes)?;
 
-    let v_ts = NonZeroU32::new(fps).unwrap_or(NonZeroU32::new(DEFAULT_FPS).unwrap());
+    let (v_ts, v_durations, v_starts) = video_timing(frames, fps);
     let mut counts = vec![video_samples.len()];
     if let Some(a) = &audio {
         counts.push(a.samples.len());
@@ -171,7 +197,7 @@ pub fn mux_mp4(
     while vi < video_samples.len() || ai < a_samples.len() {
         // time in seconds of the next sample of each track
         let v_time = if vi < video_samples.len() {
-            vi as f64 / fps as f64
+            v_starts[vi]
         } else {
             f64::INFINITY
         };
@@ -188,7 +214,7 @@ pub fn mux_mp4(
                 sample_entry: first_v.then(|| video_entry.clone()),
                 keyframe: frames[vi].is_keyframe,
                 timescale: v_ts,
-                duration: 1,
+                duration: v_durations[vi],
                 composition_time_offset: None,
                 data_offset: pos,
                 data_size: data.len(),
@@ -298,6 +324,30 @@ mod tests {
         AdtsEncodeConfig, AdtsMpegVersion, AudioObjectType, ChannelConfiguration,
         wrap_raw_aac_in_adts,
     };
+
+    fn frame(ts: Option<u32>) -> Frame {
+        Frame { is_keyframe: false, annexb: Vec::new(), ts_ms: ts }
+    }
+
+    #[test]
+    fn video_timing_uses_timestamps_including_a_dropped_frame() {
+        // 1000,1067,1134 then a 134 ms gap (one frame dropped) to 1268.
+        let frames = [1000, 1067, 1134, 1268].map(|t| frame(Some(t)));
+        let (scale, durations, starts) = video_timing(&frames, 15);
+        assert_eq!(scale.get(), 1000); // millisecond timescale
+        assert_eq!(durations, vec![67, 67, 134, 134]); // gap honored; last reuses prior
+        assert!((starts[2] - 0.134).abs() < 1e-9);
+        assert!((starts[3] - 0.268).abs() < 1e-9);
+    }
+
+    #[test]
+    fn video_timing_falls_back_to_cfr_without_timestamps() {
+        let frames = [frame(None), frame(None)];
+        let (scale, durations, starts) = video_timing(&frames, 15);
+        assert_eq!(scale.get(), 15); // fps timescale
+        assert_eq!(durations, vec![1, 1]);
+        assert!((starts[1] - 1.0 / 15.0).abs() < 1e-9);
+    }
 
     #[test]
     fn mux_audio_only_produces_valid_mp4() {

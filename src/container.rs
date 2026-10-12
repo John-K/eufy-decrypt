@@ -10,6 +10,9 @@ pub struct Record<'a> {
     pub payload: &'a [u8],
     /// Byte offset of the magic for this record within the file.
     pub offset: usize,
+    /// Presentation timestamp in ms on the camera's monotonic clock, if the
+    /// header carried one (see [`TS_BEFORE_PAYLOAD`]).
+    pub ts_ms: Option<u32>,
 }
 
 impl Record<'_> {
@@ -65,11 +68,15 @@ pub fn records(data: &[u8]) -> Vec<Record<'_>> {
                 && start + payload_len <= data.len()
                 && payload_len > 0
             {
+                let ts_ms = start
+                    .checked_sub(TS_BEFORE_PAYLOAD)
+                    .and_then(|at| read_u32(data, at));
                 out.push(Record {
                     stream_type,
                     frame_type,
                     payload: &data[start..start + payload_len],
                     offset: m,
+                    ts_ms,
                 });
             }
         }
@@ -106,6 +113,8 @@ pub fn video_dimensions(data: &[u8]) -> Option<(u16, u16, u16)> {
 pub struct VideoFrame {
     pub is_iframe: bool,
     pub fragments: Vec<Vec<u8>>,
+    /// Presentation timestamp (ms) of the frame's first record, if present.
+    pub ts_ms: Option<u32>,
 }
 
 /// Split a file into its ordered video frames and its concatenated AAC audio.
@@ -113,23 +122,29 @@ pub fn split(data: &[u8]) -> (Vec<VideoFrame>, Vec<u8>) {
     let mut video: Vec<VideoFrame> = Vec::new();
     let mut audio: Vec<u8> = Vec::new();
     let mut pending: Vec<Vec<u8>> = Vec::new();
+    let mut pending_ts: Option<u32> = None;
 
     for rec in records(data) {
         if rec.is_audio() {
             audio.extend_from_slice(rec.payload);
         } else if rec.is_video() {
             if rec.is_iframe() {
+                if pending.is_empty() {
+                    pending_ts = rec.ts_ms; // timestamp of the frame's first fragment
+                }
                 pending.push(rec.payload.to_vec());
                 if !rec.more_fragments() {
                     video.push(VideoFrame {
                         is_iframe: true,
                         fragments: std::mem::take(&mut pending),
+                        ts_ms: pending_ts.take(),
                     });
                 }
             } else {
                 video.push(VideoFrame {
                     is_iframe: false,
                     fragments: vec![rec.payload.to_vec()],
+                    ts_ms: rec.ts_ms,
                 });
             }
         }
@@ -139,6 +154,7 @@ pub fn split(data: &[u8]) -> (Vec<VideoFrame>, Vec<u8>) {
         video.push(VideoFrame {
             is_iframe: true,
             fragments: pending,
+            ts_ms: pending_ts,
         });
     }
     (video, audio)

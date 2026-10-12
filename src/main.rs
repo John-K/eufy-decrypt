@@ -105,6 +105,8 @@ enum Cmd {
         /// Write the raw elementary streams (.h264/.hevc + .aac) instead of an MP4.
         #[arg(long)]
         raw: bool,
+        /// Fallback frame rate, used only for clips whose records carry no
+        /// timestamps; normally per-frame timing comes from the container.
         #[arg(long, default_value_t = format::DEFAULT_FPS)]
         fps: u32,
     },
@@ -133,6 +135,8 @@ enum Cmd {
         sfx: Option<u32>,
         #[arg(long, default_value_t = 0)]
         jobs: usize,
+        /// Fallback frame rate, used only for clips whose records carry no
+        /// timestamps; normally per-frame timing comes from the container.
         #[arg(long, default_value_t = format::DEFAULT_FPS)]
         fps: u32,
         /// Write .m4a for files whose key is unknown.
