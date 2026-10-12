@@ -2,6 +2,12 @@
 name = "eufy-decrypt"
 version = "0.2.0"
 edition = "2024"
+authors = ["John Kelley <john@kelley.ca>"]
+description = "Decrypt eufy camera SD-card recordings (.dat/.zxvideo) to MP4, fully offline and in pure Rust."
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["eufy", "decrypt", "video", "mp4", "camera"]
+categories = ["command-line-utilities", "multimedia::video"]
 
 [dependencies]
 aes = "0.9.3"

@@ -5,5 +5,6 @@ keys.json
 file_keys.json
 *.mp4
 *.h264
+*.hevc
 *.aac
 *.m4a
