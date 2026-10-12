@@ -17,9 +17,11 @@ pub fn detect_codec(data: &[u8], file: &std::path::Path) -> Option<&'static str>
     let params = crate::keyderive::calibrate(&serial, rand, data, 256)?;
     let key = crate::keyderive::derive(&serial, rand, params);
     let (video, _) = split(data);
-    let frame = video
-        .iter()
-        .find(|f| f.fragments.first().is_some_and(|fr| crate::crypto::fragment_is_encrypted(fr)))?;
+    let frame = video.iter().find(|f| {
+        f.fragments
+            .first()
+            .is_some_and(|fr| crate::crypto::fragment_is_encrypted(fr))
+    })?;
     let frag0 = frame.fragments.first()?;
     let n = frag0.len().min(crate::format::KF_ENC_PREFIX);
     let pt = crate::crypto::decrypt_iframe(&key, &[frag0[..n].to_vec()]);
@@ -103,7 +105,12 @@ pub fn inspect(data: &[u8]) -> Report {
         .iter()
         .find(|f| !crate::crypto::fragment_is_encrypted(f))
     {
-        regions.push(("plaintext frame (ref)".into(), d.len(), escape_count(d), zero_pct(d)));
+        regions.push((
+            "plaintext frame (ref)".into(),
+            d.len(),
+            escape_count(d),
+            zero_pct(d),
+        ));
     }
     // The first encrypted fragment: whole, first 128 bytes, and the tail.
     if let Some(d) = all_frags
@@ -111,13 +118,28 @@ pub fn inspect(data: &[u8]) -> Report {
         .find(|f| crate::crypto::fragment_is_encrypted(f))
     {
         let d: &[u8] = d;
-        regions.push(("encrypted frame whole".into(), d.len(), escape_count(d), zero_pct(d)));
+        regions.push((
+            "encrypted frame whole".into(),
+            d.len(),
+            escape_count(d),
+            zero_pct(d),
+        ));
         let n = d.len().min(crate::format::KF_ENC_PREFIX);
         let head = &d[..n];
-        regions.push(("encrypted frame first128".into(), head.len(), escape_count(head), zero_pct(head)));
+        regions.push((
+            "encrypted frame first128".into(),
+            head.len(),
+            escape_count(head),
+            zero_pct(head),
+        ));
         if d.len() > n {
             let tail = &d[n..];
-            regions.push(("encrypted frame past128".into(), tail.len(), escape_count(tail), zero_pct(tail)));
+            regions.push((
+                "encrypted frame past128".into(),
+                tail.len(),
+                escape_count(tail),
+                zero_pct(tail),
+            ));
         }
     }
 

@@ -35,9 +35,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Describe a .dat/.zxvideo file's record chain and test encrypted vs plaintext regions.
-    Inspect {
-        file: PathBuf,
-    },
+    Inspect { file: PathBuf },
     /// Recover this camera's key-derivation constants (offset, sfx) once, by
     /// trying the small constant space against a real encrypted keyframe.
     Calibrate {
@@ -157,21 +155,58 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Inspect { file } => cmd_inspect(&file),
-        Cmd::Calibrate { serial, sample, rand, max_sfx } => {
-            cmd_calibrate(serial.as_deref(), &sample, rand, max_sfx)
-        }
-        Cmd::Derive { serial, rand, from, offset, sfx } => {
-            cmd_derive(serial.as_deref(), rand, from.as_deref(), offset, sfx)
-        }
-        Cmd::Keys { link, serial, offset, sfx, out, max_sfx } => {
-            cmd_keys(&link, &serial, offset, sfx, &out, max_sfx)
-        }
-        Cmd::Convert { file, out, key, keys, raw, fps } => {
-            cmd_convert(&file, &out, key.as_deref(), keys.as_deref(), raw, fps)
-        }
-        Cmd::Batch { source, dest, keys, serial, offset, sfx, jobs, fps, audio_only_fallback, limit } => {
-            cmd_batch(&source, &dest, keys.as_deref(), serial.as_deref(), offset, sfx, jobs, fps, audio_only_fallback, limit)
-        }
+        Cmd::Calibrate {
+            serial,
+            sample,
+            rand,
+            max_sfx,
+        } => cmd_calibrate(serial.as_deref(), &sample, rand, max_sfx),
+        Cmd::Derive {
+            serial,
+            rand,
+            from,
+            offset,
+            sfx,
+        } => cmd_derive(serial.as_deref(), rand, from.as_deref(), offset, sfx),
+        Cmd::Keys {
+            link,
+            serial,
+            offset,
+            sfx,
+            out,
+            max_sfx,
+        } => cmd_keys(&link, &serial, offset, sfx, &out, max_sfx),
+        Cmd::Convert {
+            file,
+            out,
+            key,
+            keys,
+            raw,
+            fps,
+        } => cmd_convert(&file, &out, key.as_deref(), keys.as_deref(), raw, fps),
+        Cmd::Batch {
+            source,
+            dest,
+            keys,
+            serial,
+            offset,
+            sfx,
+            jobs,
+            fps,
+            audio_only_fallback,
+            limit,
+        } => cmd_batch(
+            &source,
+            &dest,
+            keys.as_deref(),
+            serial.as_deref(),
+            offset,
+            sfx,
+            jobs,
+            fps,
+            audio_only_fallback,
+            limit,
+        ),
         Cmd::ExtractAudio { file, out } => cmd_extract_audio(&file, &out),
     }
 }
@@ -209,7 +244,10 @@ fn cmd_inspect(file: &std::path::Path) -> Result<()> {
             };
             println!("audio: {codec}, {rate} Hz, {ch_str}");
         }
-        None if r.audio_bytes > 0 => println!("audio: present ({} bytes), format unrecognized", r.audio_bytes),
+        None if r.audio_bytes > 0 => println!(
+            "audio: present ({} bytes), format unrecognized",
+            r.audio_bytes
+        ),
         None => println!("audio: none"),
     }
     println!(
@@ -222,7 +260,10 @@ fn cmd_inspect(file: &std::path::Path) -> Result<()> {
     }
     println!("\nfirst records:\n{}", r.first_record_dump);
     println!("region escape-sequence test (plaintext video has many; ciphertext ~none):");
-    println!("  {:<28} {:>10} {:>10} {:>8}", "region", "bytes", "escapes", "zero%");
+    println!(
+        "  {:<28} {:>10} {:>10} {:>8}",
+        "region", "bytes", "escapes", "zero%"
+    );
     for (name, len, esc, zp) in &r.regions {
         println!("  {name:<28} {len:>10} {esc:>10} {zp:>7.2}%");
     }
@@ -324,7 +365,9 @@ fn autocalibrate_from_link(
     let dir = link.parent().unwrap_or_else(|| std::path::Path::new("."));
     for e in entries {
         let p = dir.join(&e.dat_name);
-        let (Ok(data), Some(rand)) = (std::fs::read(&p), e.rand()) else { continue };
+        let (Ok(data), Some(rand)) = (std::fs::read(&p), e.rand()) else {
+            continue;
+        };
         if let Some(params) = keyderive::calibrate(serial, rand, &data, max_sfx) {
             eprintln!(
                 "calibrated against {}: offset {}, sfx {}",
@@ -365,18 +408,25 @@ fn cmd_keys(
     let dir = link.parent().unwrap_or_else(|| std::path::Path::new("."));
     let (mut checked, mut verified) = (0usize, 0usize);
     for code in keys::distinct_codes(&entries) {
-        let Some(entry) = entries.iter().find(|e| e.code == code && dir.join(&e.dat_name).exists())
+        let Some(entry) = entries
+            .iter()
+            .find(|e| e.code == code && dir.join(&e.dat_name).exists())
         else {
             continue;
         };
         let Some(rand) = entry.rand() else { continue };
-        let Ok(sample) = std::fs::read(dir.join(&entry.dat_name)) else { continue };
+        let Ok(sample) = std::fs::read(dir.join(&entry.dat_name)) else {
+            continue;
+        };
         let key = keyderive::derive(serial, rand, params);
         checked += 1;
         if keyderive::verify_against_keyframe(&key, &sample) {
             verified += 1;
         } else {
-            eprintln!("warning: derived key for code {code} did NOT decrypt {}", entry.dat_name);
+            eprintln!(
+                "warning: derived key for code {code} did NOT decrypt {}",
+                entry.dat_name
+            );
         }
     }
     if checked > 0 && verified < checked {
@@ -408,7 +458,10 @@ fn cmd_convert(
             let kf = KeyFile::load(p)?;
             let parsed = kf.parsed()?;
             keys::select_key(&parsed, &data).copied().or_else(|| {
-                eprintln!("warning: no key in {} decrypts this file; video will be garbled", p.display());
+                eprintln!(
+                    "warning: no key in {} decrypts this file; video will be garbled",
+                    p.display()
+                );
                 None
             })
         }
@@ -425,7 +478,10 @@ fn cmd_convert(
     };
     convert::convert_file(file, out, selected.as_ref(), fps, raw)?;
     if raw {
-        println!("wrote raw elementary streams next to {}", out.with_extension("").display());
+        println!(
+            "wrote raw elementary streams next to {}",
+            out.with_extension("").display()
+        );
     } else {
         println!("wrote {}", out.display());
     }
@@ -454,7 +510,9 @@ fn auto_calibrate(
     files.sort();
 
     for p in &files {
-        let Some((hdr_serial, rand)) = keys::rand_for_video(p) else { continue };
+        let Some((hdr_serial, rand)) = keys::rand_for_video(p) else {
+            continue;
+        };
         let serial = serial.unwrap_or(&hdr_serial).to_string();
         let Ok(data) = std::fs::read(p) else { continue };
         let (video, _) = container::split(&data);
@@ -509,11 +567,20 @@ fn cmd_batch(
             }
         }
     };
-    let opts = convert::BatchOptions { jobs, fps, audio_only_fallback, limit };
+    let opts = convert::BatchOptions {
+        jobs,
+        fps,
+        audio_only_fallback,
+        limit,
+    };
     let summary = convert::batch(source, dest, &keysrc, &opts)?;
     println!("done: {:?}", summary.stats);
     if !summary.failures.is_empty() {
-        println!("{} failure(s); see {}", summary.failures.len(), dest.join("convert_summary.json").display());
+        println!(
+            "{} failure(s); see {}",
+            summary.failures.len(),
+            dest.join("convert_summary.json").display()
+        );
     }
     Ok(())
 }

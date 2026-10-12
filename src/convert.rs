@@ -38,13 +38,7 @@ impl Outcome {
 }
 
 /// Convert one `.dat`/`.zxvideo` to MP4 with an explicit key (or raw streams / audio-only).
-pub fn convert_file(
-    path: &Path,
-    out: &Path,
-    key: Option<&Key>,
-    fps: u32,
-    raw: bool,
-) -> Result<()> {
+pub fn convert_file(path: &Path, out: &Path, key: Option<&Key>, fps: u32, raw: bool) -> Result<()> {
     let data = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let (video, audio) = split(&data);
     if raw {
@@ -79,8 +73,16 @@ pub fn recording_unix_time(path: &Path) -> Option<u64> {
     if !d.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    let naive = NaiveDate::from_ymd_opt(d[0..4].parse().ok()?, d[4..6].parse().ok()?, d[6..8].parse().ok()?)?
-        .and_hms_opt(d[8..10].parse().ok()?, d[10..12].parse().ok()?, d[12..14].parse().ok()?)?;
+    let naive = NaiveDate::from_ymd_opt(
+        d[0..4].parse().ok()?,
+        d[4..6].parse().ok()?,
+        d[6..8].parse().ok()?,
+    )?
+    .and_hms_opt(
+        d[8..10].parse().ok()?,
+        d[10..12].parse().ok()?,
+        d[12..14].parse().ok()?,
+    )?;
     let ts = match chrono::Local.from_local_datetime(&naive) {
         // Unambiguous, or a DST fall-back repeat (take the earlier instant).
         LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => dt.timestamp(),
@@ -96,7 +98,10 @@ pub enum KeySource {
     Probe(Vec<(Key, Option<String>)>),
     /// Derive a per-file key from the sibling snapshot's serial + rand and the
     /// calibrated constants. `serial` overrides the snapshot's when set.
-    Derive { serial: Option<String>, params: Params },
+    Derive {
+        serial: Option<String>,
+        params: Params,
+    },
 }
 
 impl KeySource {
@@ -194,7 +199,11 @@ pub fn batch(
                 .map(|x| x == "dat" || x == "zxvideo")
                 .unwrap_or(false)
         })
-        .filter(|p| p.file_name().map(|n| n != "continuefilelink.dat").unwrap_or(true))
+        .filter(|p| {
+            p.file_name()
+                .map(|n| n != "continuefilelink.dat")
+                .unwrap_or(true)
+        })
         .collect();
     names.sort();
     if opts.limit > 0 {
@@ -202,13 +211,20 @@ pub fn batch(
     }
 
     let out_path = |p: &Path| -> PathBuf {
-        let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let stem = p
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let day = stem.get(..8).unwrap_or(&stem).to_string();
         dest.join(day).join(format!("{stem}.mp4"))
     };
 
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(if opts.jobs == 0 { rayon::current_num_threads() } else { opts.jobs })
+        .num_threads(if opts.jobs == 0 {
+            rayon::current_num_threads()
+        } else {
+            opts.jobs
+        })
         .build()?;
 
     let pb = ProgressBar::new(names.len() as u64);

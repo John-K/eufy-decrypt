@@ -17,9 +17,13 @@ use shiguredo_mp4::bitstream::aac::{
     self, AudioSpecificConfig, Mp4aSampleEntryConfig, SamplingFrequency,
 };
 use shiguredo_mp4::bitstream::h264::{self, H264SampleEntryConfig};
-use shiguredo_mp4::bitstream::h265::{self, H265ConstantFrameRate, H265SampleEntryConfig, LengthSize};
+use shiguredo_mp4::bitstream::h265::{
+    self, H265ConstantFrameRate, H265SampleEntryConfig, LengthSize,
+};
 use shiguredo_mp4::boxes::SampleEntry;
-use shiguredo_mp4::mux::{Mp4FileMuxer, Mp4FileMuxerOptions, Sample, estimate_maximum_moov_box_size};
+use shiguredo_mp4::mux::{
+    Mp4FileMuxer, Mp4FileMuxerOptions, Sample, estimate_maximum_moov_box_size,
+};
 
 /// Map any shiguredo_mp4 error into anyhow with a prefix.
 fn me<E: std::fmt::Display>(ctx: &str) -> impl FnOnce(E) -> anyhow::Error + '_ {
@@ -51,7 +55,8 @@ fn parse_audio(aac_bytes: &[u8]) -> Result<Option<AudioTrack>> {
             rate = hz;
             asc = Some(AudioSpecificConfig {
                 audio_object_type: hdr.audio_object_type,
-                sampling_frequency: SamplingFrequency::from_hz(hz).map_err(me("AAC sample rate"))?,
+                sampling_frequency: SamplingFrequency::from_hz(hz)
+                    .map_err(me("AAC sample rate"))?,
                 channel_configuration: hdr.channel_configuration,
             });
         }
@@ -68,10 +73,19 @@ fn parse_audio(aac_bytes: &[u8]) -> Result<Option<AudioTrack>> {
     };
     let mp4a = aac::build_mp4a_box(
         &asc,
-        &Mp4aSampleEntryConfig { es_id: 1, buffer_size_db: 0, max_bitrate: 0, avg_bitrate: 0 },
+        &Mp4aSampleEntryConfig {
+            es_id: 1,
+            buffer_size_db: 0,
+            max_bitrate: 0,
+            avg_bitrate: 0,
+        },
     )
     .map_err(me("building mp4a box"))?;
-    Ok(Some(AudioTrack { entry: SampleEntry::Mp4a(mp4a), rate, samples }))
+    Ok(Some(AudioTrack {
+        entry: SampleEntry::Mp4a(mp4a),
+        rate,
+        samples,
+    }))
 }
 
 fn sfi_to_hz(i: u8) -> Option<u32> {
@@ -91,7 +105,9 @@ fn video_timing(frames: &[Frame], fps: u32) -> (NonZeroU32, Vec<u32>, Vec<f64>) 
     let n = frames.len();
     let ts: Option<Vec<u32>> = frames.iter().map(|f| f.ts_ms).collect();
     if let Some(ts) = ts {
-        let sane = ts.windows(2).all(|w| w[1] >= w[0] && w[1] - w[0] <= MAX_GAP_MS);
+        let sane = ts
+            .windows(2)
+            .all(|w| w[1] >= w[0] && w[1] - w[0] <= MAX_GAP_MS);
         if n >= 2 && sane && ts[n - 1] > ts[0] {
             let scale = NonZeroU32::new(1000).unwrap();
             let mut durations: Vec<u32> = (0..n - 1).map(|i| (ts[i + 1] - ts[i]).max(1)).collect();
@@ -128,7 +144,9 @@ fn build_video(frames: &[Frame], codec: &str) -> Result<(SampleEntry, Vec<Vec<u8
             .map_err(me("converting HEVC frame to length-prefixed"))?;
         (SampleEntry::Hev1(hev1), samples)
     } else {
-        let cfg = H264SampleEntryConfig { length_size: LengthSize::FourBytes };
+        let cfg = H264SampleEntryConfig {
+            length_size: LengthSize::FourBytes,
+        };
         let avc1 =
             h264::build_avc1_box_from_annexb(&kf.annexb, &cfg).map_err(me("building avc1 box"))?;
         let samples = frames
@@ -219,7 +237,9 @@ pub fn mux_mp4(
                 data_offset: pos,
                 data_size: data.len(),
             };
-            muxer.append_sample(&sample).map_err(me("appending video sample"))?;
+            muxer
+                .append_sample(&sample)
+                .map_err(me("appending video sample"))?;
             pos += data.len() as u64;
             first_v = false;
             vi += 1;
@@ -236,7 +256,9 @@ pub fn mux_mp4(
                 data_offset: pos,
                 data_size: data.len(),
             };
-            muxer.append_sample(&sample).map_err(me("appending audio sample"))?;
+            muxer
+                .append_sample(&sample)
+                .map_err(me("appending audio sample"))?;
             pos += data.len() as u64;
             first_a = false;
             ai += 1;
@@ -287,7 +309,9 @@ pub fn mux_audio_only(aac_bytes: &[u8], out: &Path, creation_unix: Option<u64>) 
             data_offset: pos,
             data_size: data.len(),
         };
-        muxer.append_sample(&sample).map_err(me("appending audio sample"))?;
+        muxer
+            .append_sample(&sample)
+            .map_err(me("appending audio sample"))?;
         pos += data.len() as u64;
         first = false;
     }
@@ -319,14 +343,18 @@ pub fn write_raw(video: &[u8], aac_bytes: &[u8], out_base: &Path, codec: &str) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shiguredo_mp4::{Decode, Mp4File};
     use shiguredo_mp4::bitstream::aac::{
         AdtsEncodeConfig, AdtsMpegVersion, AudioObjectType, ChannelConfiguration,
         wrap_raw_aac_in_adts,
     };
+    use shiguredo_mp4::{Decode, Mp4File};
 
     fn frame(ts: Option<u32>) -> Frame {
-        Frame { is_keyframe: false, annexb: Vec::new(), ts_ms: ts }
+        Frame {
+            is_keyframe: false,
+            annexb: Vec::new(),
+            ts_ms: ts,
+        }
     }
 
     #[test]

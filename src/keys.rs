@@ -79,7 +79,11 @@ pub struct EufyHeader {
 
 impl EufyHeader {
     pub fn rand(&self) -> Option<u64> {
-        self.code.strip_prefix("01").unwrap_or(&self.code).parse().ok()
+        self.code
+            .strip_prefix("01")
+            .unwrap_or(&self.code)
+            .parse()
+            .ok()
     }
 }
 
@@ -97,7 +101,11 @@ pub fn parse_eufy_header(data: &[u8]) -> Option<EufyHeader> {
     let c2 = after_serial.iter().position(|&b| b == b':')?;
     let code = String::from_utf8_lossy(&after_serial[..c2]).into_owned();
     let payload_offset = PREFIX.len() + c1 + 1 + c2 + 1;
-    Some(EufyHeader { serial, code, payload_offset })
+    Some(EufyHeader {
+        serial,
+        code,
+        payload_offset,
+    })
 }
 
 /// Given a `.zxvideo`/`.dat` path, find the per-event `rand` from a sibling
@@ -246,9 +254,18 @@ mod tests {
     #[test]
     fn distinct() {
         let e = vec![
-            LinkEntry { dat_name: "a.dat".into(), code: "0111".into() },
-            LinkEntry { dat_name: "b.dat".into(), code: "0111".into() },
-            LinkEntry { dat_name: "c.dat".into(), code: "0122".into() },
+            LinkEntry {
+                dat_name: "a.dat".into(),
+                code: "0111".into(),
+            },
+            LinkEntry {
+                dat_name: "b.dat".into(),
+                code: "0111".into(),
+            },
+            LinkEntry {
+                dat_name: "c.dat".into(),
+                code: "0122".into(),
+            },
         ];
         assert_eq!(distinct_codes(&e), vec!["0111".to_string(), "0122".into()]);
     }
@@ -260,14 +277,23 @@ mod tests {
     #[test]
     fn derive_key_file_one_per_code() {
         let entries = vec![
-            LinkEntry { dat_name: "20260814090000.dat".into(), code: "0115060042".into() },
-            LinkEntry { dat_name: "20260813101151.dat".into(), code: "0115060042".into() },
+            LinkEntry {
+                dat_name: "20260814090000.dat".into(),
+                code: "0115060042".into(),
+            },
+            LinkEntry {
+                dat_name: "20260813101151.dat".into(),
+                code: "0115060042".into(),
+            },
         ];
         let kf = derive_key_file(&entries, "T8416P0000000000", Params { offset: 3, sfx: 12 });
         assert_eq!(kf.keys.len(), 1); // deduplicated by code
         assert_eq!(kf.keys[0].key, "0ADD5A67A51A0762");
         // labelled with the earliest recording date for that code
-        assert_eq!(kf.keys[0].label.as_deref(), Some("20260813 code 0115060042"));
+        assert_eq!(
+            kf.keys[0].label.as_deref(),
+            Some("20260813 code 0115060042")
+        );
     }
 }
 
@@ -276,12 +302,16 @@ mod header_tests {
     use super::*;
     #[test]
     fn parse_eufy_header_fields() {
-        let h = parse_eufy_header(b"eufysecurity:T8416P0000000000:0115060042:\xee\xca\xdf").unwrap();
+        let h =
+            parse_eufy_header(b"eufysecurity:T8416P0000000000:0115060042:\xee\xca\xdf").unwrap();
         assert_eq!(h.serial, "T8416P0000000000");
         assert_eq!(h.code, "0115060042");
         assert_eq!(h.rand(), Some(15060042));
         assert_eq!(h.payload_offset, 41);
-        assert_eq!(&b"eufysecurity:T8416P0000000000:0115060042:\xee\xca\xdf"[h.payload_offset..], b"\xee\xca\xdf");
+        assert_eq!(
+            &b"eufysecurity:T8416P0000000000:0115060042:\xee\xca\xdf"[h.payload_offset..],
+            b"\xee\xca\xdf"
+        );
     }
     #[test]
     fn rejects_plain_jpeg() {

@@ -187,7 +187,11 @@ mod tests {
         f.extend(rec(STREAM_AUDIO, FRAME_AUDIO, b"AAAA"));
         f.extend(rec(STREAM_VIDEO, FRAME_PFRAME, b"PPPP"));
         // keyframe split across two fragments
-        f.extend(rec(STREAM_VIDEO, FRAME_IFRAME | FRAME_MORE_FRAGMENTS, b"frag0___"));
+        f.extend(rec(
+            STREAM_VIDEO,
+            FRAME_IFRAME | FRAME_MORE_FRAGMENTS,
+            b"frag0___",
+        ));
         f.extend(rec(STREAM_VIDEO, FRAME_IFRAME, b"frag1"));
         f.extend(rec(STREAM_AUDIO, FRAME_AUDIO, b"BBBB"));
 

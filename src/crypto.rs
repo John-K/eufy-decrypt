@@ -25,10 +25,16 @@ impl Key {
             return Ok(Key(k));
         }
         let bytes = hex::decode(s).with_context(|| {
-            format!("key must be 16 ASCII chars or 32 hex chars, got {} chars", s.len())
+            format!(
+                "key must be 16 ASCII chars or 32 hex chars, got {} chars",
+                s.len()
+            )
         })?;
         if bytes.len() != AES_KEY_LEN {
-            bail!("hex key must decode to {AES_KEY_LEN} bytes, got {}", bytes.len());
+            bail!(
+                "hex key must decode to {AES_KEY_LEN} bytes, got {}",
+                bytes.len()
+            );
         }
         let mut k = [0u8; AES_KEY_LEN];
         k.copy_from_slice(&bytes);
@@ -145,10 +151,18 @@ pub fn build_frames(video: &[VideoFrame], key: Option<&Key>) -> Vec<Frame> {
         }
         let ts_ms = frame.ts_ms;
         match find_start_code(&annexb) {
-            Some(0) => out.push(Frame { is_keyframe, annexb, ts_ms }),
+            Some(0) => out.push(Frame {
+                is_keyframe,
+                annexb,
+                ts_ms,
+            }),
             Some(s) => {
                 annexb.drain(..s);
-                out.push(Frame { is_keyframe, annexb, ts_ms });
+                out.push(Frame {
+                    is_keyframe,
+                    annexb,
+                    ts_ms,
+                });
             }
             None => {} // no NAL start code: drop (e.g. undecrypted keyframe)
         }

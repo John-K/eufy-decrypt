@@ -63,7 +63,11 @@ fn hex_upper(bytes: &[u8]) -> String {
 /// device constants.
 pub fn derive(serial: &str, rand: u64, p: Params) -> Key {
     let l = 16usize;
-    let base_prefix: String = serial.chars().skip(p.offset.min(l)).take(l - p.offset.min(l)).collect();
+    let base_prefix: String = serial
+        .chars()
+        .skip(p.offset.min(l))
+        .take(l - p.offset.min(l))
+        .collect();
     let base_code = format!("{base_prefix}{}", p.sfx);
 
     let rnd_str = format!("{}{}", 1000u32.wrapping_sub(p.sfx), rand);
@@ -88,7 +92,9 @@ pub fn derive(serial: &str, rand: u64, p: Params) -> Key {
 pub fn verify_against_keyframe(key: &Key, dat: &[u8]) -> bool {
     let (video, _) = split(dat);
     for frame in video.iter().filter(|f| f.is_iframe) {
-        let Some(frag0) = frame.fragments.first() else { continue };
+        let Some(frag0) = frame.fragments.first() else {
+            continue;
+        };
         if crate::crypto::fragment_is_encrypted(frag0) {
             let n = frag0.len().min(KF_ENC_PREFIX);
             let pt = decrypt_iframe(key, &[frag0[..n].to_vec()]);
