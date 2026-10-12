@@ -11,36 +11,54 @@ env:
 
 jobs:
   build:
-    name: Build ${{ matrix.target }}
+    name: Build ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            label: x86_64-unknown-linux-gnu
+            targets: x86_64-unknown-linux-gnu
+          # macOS universal2: build both arches and lipo them together.
           - os: macos-latest
-            target: aarch64-apple-darwin
+            label: universal-apple-darwin
+            targets: aarch64-apple-darwin x86_64-apple-darwin
           - os: windows-latest
-            target: x86_64-pc-windows-msvc
+            label: x86_64-pc-windows-msvc
+            targets: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.targets }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: ${{ matrix.label }}
+
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          for t in ${{ matrix.targets }}; do
+            cargo build --release --locked --target "$t"
+          done
 
       - name: Package (unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          stage="${BIN}-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          stage="${BIN}-${GITHUB_REF_NAME}-${{ matrix.label }}"
           mkdir "$stage"
-          cp "target/${{ matrix.target }}/release/${BIN}" "$stage/"
+          set -- ${{ matrix.targets }}
+          if [ "$#" -gt 1 ]; then
+            # Combine the per-arch binaries into one universal binary.
+            bins=""
+            for t in "$@"; do bins="$bins target/$t/release/${BIN}"; done
+            lipo -create -output "$stage/${BIN}" $bins
+            lipo -info "$stage/${BIN}"
+          else
+            cp "target/$1/release/${BIN}" "$stage/"
+          fi
           cp README.md LICENSE-MIT LICENSE-APACHE "$stage/"
           tar -czf "${stage}.tar.gz" "$stage"
           echo "ASSET=${stage}.tar.gz" >> "$GITHUB_ENV"
@@ -49,9 +67,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $stage = "$env:BIN-$env:GITHUB_REF_NAME-${{ matrix.target }}"
+          $stage = "$env:BIN-$env:GITHUB_REF_NAME-${{ matrix.label }}"
           New-Item -ItemType Directory -Path $stage | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/$env:BIN.exe" $stage
+          Copy-Item "target/${{ matrix.label }}/release/$env:BIN.exe" $stage
           Copy-Item README.md, LICENSE-MIT, LICENSE-APACHE $stage
           Compress-Archive -Path $stage -DestinationPath "$stage.zip"
           "ASSET=$stage.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -59,7 +77,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}
+          name: ${{ matrix.label }}
           path: ${{ env.ASSET }}
           if-no-files-found: error
 
