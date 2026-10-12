@@ -6,6 +6,7 @@ authors = ["John Kelley <john@kelley.ca>"]
 description = "Decrypt eufy camera SD-card recordings (.dat/.zxvideo) to MP4, fully offline and in pure Rust."
 license = "MIT OR Apache-2.0"
 readme = "README.md"
+repository = "https://github.com/John-K/eufy-decrypt"
 keywords = ["eufy", "decrypt", "video", "mp4", "camera"]
 categories = ["command-line-utilities", "multimedia::video"]
 
