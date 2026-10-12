@@ -132,6 +132,7 @@ mod tests {
 
     #[test]
     fn derive_is_deterministic() {
+        // Determinism only; any serial-shaped input works (no real serial here).
         let p = Params { offset: 3, sfx: 12 };
         let a = derive("T8416P0000000000", 15060042, p);
         let b = derive("T8416P0000000000", 15060042, p);
@@ -139,12 +140,18 @@ mod tests {
         assert_eq!(a.0.len(), 16);
     }
 
-    /// Known-answer test: a real T8416 clip (serial T8416P0000000000,
-    /// rand 15060042) with its recovered constants produces the key that
-    /// decrypts its keyframe. Pins the whole derivation against regressions.
+    /// Known-answer test: the real T8416 clip (rand 15060042) with its recovered
+    /// constants produces the key that decrypts its keyframe. Pins the whole
+    /// derivation against regressions. The serial is recovered from the sample
+    /// recordings at runtime (never stored in source); the test skips when they
+    /// are absent.
     #[test]
     fn known_answer_t8416() {
-        let key = derive("T8416P0000000000", 15060042, Params { offset: 3, sfx: 12 });
+        let Some(serial) = crate::testutil::sample_serial() else {
+            eprintln!("skipping known_answer_t8416: no sample recordings (set EUFY_TEST_DATA)");
+            return;
+        };
+        let key = derive(&serial, 15060042, Params { offset: 3, sfx: 12 });
         assert_eq!(&key.0, b"0ADD5A67A51A0762");
     }
 }

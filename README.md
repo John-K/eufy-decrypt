@@ -112,9 +112,10 @@ The `serial` and per-clip `rand` are read from the sibling snapshot's
 `calibrate`, `derive` (with `--from <clip>`), and `batch`; pass it explicitly
 only for files that have no snapshot, such as `.dat` continuous recordings.
 
-Verified against a real T8416 (serial `T8416P0000000000`): `offset 3`, `sfx 12`,
-rand `15060042` -> key `0ADD5A67A51A0762`, which decrypts to a clean 2304x1296
-HEVC keyframe. This case is pinned as a regression test.
+Verified against a real T8416: `offset 3`, `sfx 12`, rand `15060042` -> key
+`0ADD5A67A51A0762`, which decrypts to a clean 2304x1296 HEVC keyframe. This case
+is pinned as a regression test; the camera serial is recovered from the sample
+recordings at test time (via `EUFY_TEST_DATA`), never stored in the source.
 
 ## keys.json format
 

@@ -271,11 +271,18 @@ mod tests {
     }
 
     /// One key per distinct weekly code, derived via the same algorithm as the
-    /// event-clip path. Pinned against the known-answer vector (serial
-    /// T8416P0000000000, code 0115060042 -> key 0ADD5A67A51A0762): the leading
-    /// "01" is stripped to rand 15060042, so `keys` and `derive` agree.
+    /// event-clip path. Pinned against the known-answer vector (code 0115060042
+    /// -> key 0ADD5A67A51A0762): the leading "01" is stripped to rand 15060042,
+    /// so `keys` and `derive` agree. The serial is recovered from the sample
+    /// recordings at runtime (never stored in source); skips when absent.
     #[test]
     fn derive_key_file_one_per_code() {
+        let Some(serial) = crate::testutil::sample_serial() else {
+            eprintln!(
+                "skipping derive_key_file_one_per_code: no sample recordings (set EUFY_TEST_DATA)"
+            );
+            return;
+        };
         let entries = vec![
             LinkEntry {
                 dat_name: "20260814090000.dat".into(),
@@ -286,7 +293,7 @@ mod tests {
                 code: "0115060042".into(),
             },
         ];
-        let kf = derive_key_file(&entries, "T8416P0000000000", Params { offset: 3, sfx: 12 });
+        let kf = derive_key_file(&entries, &serial, Params { offset: 3, sfx: 12 });
         assert_eq!(kf.keys.len(), 1); // deduplicated by code
         assert_eq!(kf.keys[0].key, "0ADD5A67A51A0762");
         // labelled with the earliest recording date for that code
@@ -302,6 +309,8 @@ mod header_tests {
     use super::*;
     #[test]
     fn parse_eufy_header_fields() {
+        // Placeholder 16-char serial: this exercises header parsing, not a real
+        // device. payload_offset = 13 ("eufysecurity:") + 16 + 1 + 10 + 1 = 41.
         let h =
             parse_eufy_header(b"eufysecurity:T8416P0000000000:0115060042:\xee\xca\xdf").unwrap();
         assert_eq!(h.serial, "T8416P0000000000");

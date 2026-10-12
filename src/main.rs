@@ -12,6 +12,8 @@ mod inspect;
 mod keyderive;
 mod keys;
 mod remux;
+#[cfg(test)]
+mod testutil;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
