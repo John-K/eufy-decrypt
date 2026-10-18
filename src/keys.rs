@@ -169,32 +169,68 @@ impl LinkEntry {
 
 /// Parse `continuefilelink.dat`, mapping each recording to its 10-digit code.
 ///
-/// The file is text-ish: each line references a `.dat` path and a trailing
-/// 10-digit code. We scan tolerantly rather than assume a fixed field width,
-/// so a slightly different layout on another model still yields the codes.
+/// The on-card file is **binary**: fixed-width, NUL-padded records (an 8-byte
+/// header, the recording path, padding, then the 10-digit `"01" + rand` code),
+/// with no line breaks. We scan the raw bytes for each `…/<timestamp>.dat`
+/// name and take the next 10-digit `01…` run before the following `.dat`.
+/// This also tolerates a whitespace/newline-delimited layout.
 pub fn parse_link_file(data: &[u8]) -> Vec<LinkEntry> {
-    let text = String::from_utf8_lossy(data);
     let mut out = Vec::new();
-    for line in text.lines() {
-        let dat = line
-            .split_whitespace()
-            .find(|t| t.ends_with(".dat"))
-            .map(|t| {
-                Path::new(t)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| t.to_string())
+    let mut i = 0usize;
+    while let Some(rel) = find_bytes(&data[i..], b".dat") {
+        let dot = i + rel;
+        // recording name = the ASCII digits immediately preceding ".dat"
+        let mut start = dot;
+        while start > 0 && data[start - 1].is_ascii_digit() {
+            start -= 1;
+        }
+        let after = dot + 4;
+        // the code sits between this ".dat" and the next one (NUL padding on-card)
+        let next = find_bytes(&data[after..], b".dat")
+            .map(|r| after + r)
+            .unwrap_or(data.len());
+        i = after;
+        if dot - start < 8 {
+            continue; // not a YYYYMMDDHHMMSS-style name
+        }
+        let Ok(name) = std::str::from_utf8(&data[start..dot]) else {
+            continue;
+        };
+        if let Some(code) = next_code(&data[after..next]) {
+            out.push(LinkEntry {
+                dat_name: format!("{name}.dat"),
+                code,
             });
-        // last 10-digit run on the line, starting with "01"
-        let code = line
-            .split(|c: char| !c.is_ascii_digit())
-            .rfind(|t| t.len() == 10 && t.starts_with("01"))
-            .map(|s| s.to_string());
-        if let (Some(dat_name), Some(code)) = (dat, code) {
-            out.push(LinkEntry { dat_name, code });
         }
     }
     out
+}
+
+/// First index of `needle` in `hay`.
+fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+/// First run of exactly 10 ASCII digits starting with "01".
+fn next_code(data: &[u8]) -> Option<String> {
+    let mut j = 0;
+    while j < data.len() {
+        if data[j].is_ascii_digit() {
+            let run = data[j..].iter().take_while(|b| b.is_ascii_digit()).count();
+            if run == 10 && &data[j..j + 2] == b"01" {
+                return std::str::from_utf8(&data[j..j + 10])
+                    .ok()
+                    .map(str::to_string);
+            }
+            j += run;
+        } else {
+            j += 1;
+        }
+    }
+    None
 }
 
 /// Distinct week codes across a link file, sorted.
@@ -249,6 +285,21 @@ mod tests {
         assert_eq!(entries[0].dat_name, "20261007105210.dat");
         assert_eq!(entries[0].code, "0163419399");
         assert_eq!(entries[0].rand(), Some(63419399));
+    }
+
+    #[test]
+    fn link_parsing_binary() {
+        // real on-card layout: 8-byte header, path, NUL padding, 10-digit code, NUL padding
+        let mut sample = vec![0x7b, 0x72, 0xff, 0x66, 0xf4, 0x72, 0xff, 0x66];
+        sample.extend_from_slice(b"/media/mmcblk0p1/video/continue/20240803131002.dat");
+        sample.extend_from_slice(&[0u8; 16]);
+        sample.extend_from_slice(b"0128917936");
+        sample.extend_from_slice(&[0u8; 6]);
+        let entries = parse_link_file(&sample);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].dat_name, "20240803131002.dat");
+        assert_eq!(entries[0].code, "0128917936");
+        assert_eq!(entries[0].rand(), Some(28917936));
     }
 
     #[test]
