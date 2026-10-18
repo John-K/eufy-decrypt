@@ -221,7 +221,9 @@ fn next_code(data: &[u8]) -> Option<String> {
         if data[j].is_ascii_digit() {
             let run = data[j..].iter().take_while(|b| b.is_ascii_digit()).count();
             if run == 10 && &data[j..j + 2] == b"01" {
-                return std::str::from_utf8(&data[j..j + 10]).ok().map(str::to_string);
+                return std::str::from_utf8(&data[j..j + 10])
+                    .ok()
+                    .map(str::to_string);
             }
             j += run;
         } else {
